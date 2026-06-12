@@ -1,0 +1,51 @@
+run_name: 300w_lmnet_m
+seed: 3407
+
+data:
+  dataset: 300w
+  root: ./data
+  archive_url: https://huggingface.co/datasets/quoctai219/300W/resolve/main/300w_dataset.zip?download=true
+  image_size: 192
+  num_landmarks: 68
+  metric_eye_groups:
+    - [36, 37, 38, 39, 40, 41]
+    - [42, 43, 44, 45, 46, 47]
+  valid_ratio: 0.1
+  download: true
+  num_workers: 4
+  train_subset: null
+  valid_subset: null
+  test_subset: null
+
+model:
+  width_mult: 1.75
+  hidden_dim: 768
+  dropout: 0.15
+  use_se: true
+  head_type: multiscale
+  fusion_dim: 160
+  pose_head: false
+
+train:
+  epochs: 140
+  batch_size: 128
+  lr: 0.0025
+  weight_decay: 0.01
+  amp: true
+  grad_clip: 1.0
+  ema_decay: 0.999
+  label_smoothing: 0.0
+  log_interval_steps: 25
+
+loss:
+  wing_w: 0.05
+  wing_epsilon: 0.01
+  geometry_weight: 0.20
+  pose_weight: 0.0
+
+eval:
+  primary_threshold: 0.08
+  viz_samples: 12
+
+system:
+  output_root: ./runs

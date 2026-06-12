@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+data/
+runs/
+logs/
+*.onnx
+*.pt
+*.pth
+*.csv
+*.json
+*.png
+*.jpg
+
+# Allow committed documentation imagery
+!docs/
+!docs/**
