@@ -5,6 +5,10 @@
 
 [中文（默认）](README.md) | English
 
+![hero](docs/images/hero.png)
+
+*106-point predictions (INT8 ONNX) on four LaPa test samples. Contour=gray, brow=blue, nose=green, eye=red, mouth=yellow.*
+
 ---
 
 ## Performance

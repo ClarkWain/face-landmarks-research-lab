@@ -5,6 +5,10 @@
 
 中文（默认） | [README.en.md](README.en.md)
 
+![hero](docs/images/hero.png)
+
+*4 张 LaPa 测试集样例上的 106 点预测（INT8 ONNX）。脸郭灰、眉毛蓝、鼻子绿、眼睛红、嘴巴黄。*
+
 ---
 
 ## 性能

@@ -5,6 +5,10 @@
 
 [中文（默认）](README.md) | English
 
+![face106 hero](face106/docs/images/hero.png)
+
+*face106 predictions on four LaPa test samples (INT8 ONNX, 17.93 MB).*
+
 ---
 
 ## Sub-projects

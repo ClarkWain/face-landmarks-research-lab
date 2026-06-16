@@ -4,7 +4,9 @@
 > 提供经过完整训练 / 量化 / 评测 / 打包的小模型，可直接拿来用。
 
 中文（默认） | [English](README.en.md)
+![face106 hero](face106/docs/images/hero.png)
 
+*face106 在 LaPa 测试集上的 106 点预测示例（INT8 ONNX，17.93 MB）。*
 ---
 
 ## 子项目
