@@ -1,0 +1,60 @@
+run_name: lapa_hrnet_w18_ft_wflw_smoke_e1
+seed: 3407
+
+system:
+  output_root: runs
+
+data:
+  dataset: lapa
+  root: ../data
+  lapa_root: ../data/LaPa
+  image_size: 256
+  num_landmarks: 106
+  enable_hflip: true
+  overfit_same_split: true
+  metric_eye_groups:
+    - [66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79]
+    - [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93]
+  valid_ratio: 0.1
+  test_ratio: 0.1
+  download: false
+  num_workers: 0
+  train_subset: 32
+  valid_subset: 8
+  test_subset: 8
+  crop_scale: 1.30
+  aug_scale_range: [0.96, 1.04]
+  aug_shift: 0.02
+
+model:
+  arch: hrnet_w18
+  base_channels: 32
+  num_blocks: 1
+
+train:
+  epochs: 1
+  batch_size: 8
+  lr: 0.001
+  weight_decay: 0.01
+  amp: true
+  grad_clip: 1.0
+  ema_decay: 0.99
+  scheduler: none
+  use_ema: false
+  init_mean_shape: false
+  finetune_checkpoint: runs/wflw_hrnet_w18_pretrain_smoke_e1/best.pt
+  log_interval_steps: 1
+  select_metric: valid_nme
+  select_mode: min
+
+loss:
+  wing_w: 0.04
+  wing_epsilon: 0.01
+  geometry_weight: 0.08
+  heatmap_weight: 1.0
+  heatmap_loss: kl
+  heatmap_sigma: 1.5
+
+eval:
+  primary_threshold: 0.08
+  viz_samples: 4

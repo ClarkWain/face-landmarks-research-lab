@@ -21,3 +21,15 @@ logs/
 # Allow committed documentation imagery
 !docs/
 !docs/**
+
+# Allow ONNX model bundled with face106 pip package
+!face106-pkg/face106/assets/*.onnx
+
+# IDE
+.idea/
+.vscode/
+
+# Build artifacts
+*.egg-info/
+build/
+dist/
