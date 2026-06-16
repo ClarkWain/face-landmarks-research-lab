@@ -379,3 +379,52 @@
 - ICME 2019 (256): nme=0.0431, acc_005=72.80%, acc_008=88.73%, FR_008=5.40%
 - ICME 2019 (384, FP32 ref): nme=0.0337, acc_005=82.49%, FR_008=1.50%
 - 结论: INT8 退化可控（NME +9.6%, acc@0.08 -0.38pp）。LaPa 上 acc@0.08 仍达 97.60%。模型 17.93MB 在 5~20MB 区间。
+
+## 2026-06-16 | train | lmnet_w05_kd_icme2mb (ICME 2MB 目标，进行中)
+- run_name: lapa_lmnet_w05_kd_icme2mb
+- arch: LMNet width_mult=0.5 + heatmap head, fusion_dim=128, num_landmarks=106
+- params: ~0.91M (FP32 ~3.6MB, INT8 ~1MB) — 满足 ICME 2021 ≤2MB 限制
+- teacher: HRNet W18 best.pt (runs/lapa_hrnet_w18_awing_mixed_e80, NME 2.16%)
+- 蒸馏: distill_weight=0.5 (wing_loss 在 coord 层面对齐 student vs teacher)
+- 数据: lapa_mixed (LaPa 18168 + JD-landmark 20386 + Pseudo WFLW 74950 = 113504)
+- 训练: 60 epoch, batch=128, lr=0.0015, cosine, EMA 0.999, AMP, num_workers=4
+- speed: 2.5 it/s 稳态, 1 epoch ≈ 6 min, 全量 ≈ 6 hr
+- 显存: 9.9 GB / 22 GB (利用率 93%)
+- 目标: LaPa NME ≤ 3.5%, ICME 384 NME ≤ 4.0% (≤ ICME 2021 TOP1 4.01%)
+- 状态: 训练中 (PID 46068)
+## 2026-06-16 17:45:40 | train | lmnet_w08_kd_smoke
+- 优化点: baseline
+- run_name: lmnet_w08_kd_smoke
+- note: baseline
+- best_epoch: 1
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.566873
+- best_valid_acc_008: 1.351415
+- best_test_acc_008: 1.452359
+- best_test_acc_005: 0.536792
+- best_test_nme: 0.566873
+- parameter_count: 1636196
+- num_landmarks: 106
+- estimated_int8_size_mb: 1.560398
+- estimated_fp32_size_mb: 6.241592
+- preview_path: runs\lmnet_w08_kd_smoke\preview_best.png
+- history_path: runs\lmnet_w08_kd_smoke\history.csv
+## 2026-06-16 18:06:05 | train | lmnet_w08_kd_smoke3
+- 优化点: baseline
+- run_name: lmnet_w08_kd_smoke3
+- note: baseline
+- best_epoch: 3
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.130776
+- best_valid_acc_008: 37.875
+- best_test_acc_008: 38.472
+- best_test_acc_005: 19.530
+- best_test_nme: 0.130776
+- parameter_count: 1636196
+- num_landmarks: 106
+- estimated_int8_size_mb: 1.560398
+- estimated_fp32_size_mb: 6.241592
+- preview_path: runs\lmnet_w08_kd_smoke3\preview_best.png
+- history_path: runs\lmnet_w08_kd_smoke3\history.csv

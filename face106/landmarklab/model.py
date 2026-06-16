@@ -751,6 +751,177 @@ class HRNetHeatmapNet(nn.Module):
         return landmarks
 
 
+class PFLDInvertedResidual(nn.Module):
+    """PFLD-style inverted residual: pw expand → dw 3x3 → pw project, residual when stride=1 and channels match."""
+
+    def __init__(self, in_channels: int, out_channels: int, stride: int, expand_ratio: int) -> None:
+        super().__init__()
+        hidden = in_channels * expand_ratio
+        self.use_residual = stride == 1 and in_channels == out_channels
+        layers: list[nn.Module] = []
+        if expand_ratio != 1:
+            layers.append(ConvBNAct(in_channels, hidden, 1))
+        layers.append(ConvBNAct(hidden, hidden, 3, stride=stride, groups=hidden))
+        layers.extend([nn.Conv2d(hidden, out_channels, 1, bias=False), nn.BatchNorm2d(out_channels)])
+        self.block = nn.Sequential(*layers)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        outputs = self.block(inputs)
+        if self.use_residual:
+            outputs = outputs + inputs
+        return outputs
+
+
+class PFLDNet(nn.Module):
+    """PFLD-style backbone for face landmark regression.
+
+    Reference: Guo et al., "PFLD: A Practical Facial Landmark Detector" (2019).
+    Adapted for 256x256 input (one extra stride-2 stage compared to original 112x112 design).
+    Optional PIP head (cls grid + sub-pixel offset) replaces the FC regression head.
+    Optional auxiliary pose head used during training for regularization.
+    """
+
+    def __init__(
+        self,
+        *,
+        num_landmarks: int = 106,
+        width_mult: float = 1.0,
+        head_type: str = "fc",
+        pip_grid: int = 8,
+        aux_pose_head: bool = True,
+    ) -> None:
+        super().__init__()
+        self.num_landmarks = num_landmarks
+        self.head_type = head_type
+        self.pip_grid = pip_grid
+        self.use_pose_head = aux_pose_head
+
+        c = lambda n: _round_channels(n, width_mult)
+        # Stage 1+2: 256→128→128 (stride 2 then stride 1)
+        self.stage1 = ConvBNAct(3, c(64), 3, stride=2)
+        self.stage2 = ConvBNAct(c(64), c(64), 3, stride=1, groups=c(64))
+        # Stage 3: 5x InvBlock e=2, [2,1,1,1,1] → 64 (256/4)
+        s3_out = c(64)
+        self.stage3 = nn.Sequential(
+            PFLDInvertedResidual(c(64), s3_out, stride=2, expand_ratio=2),
+            PFLDInvertedResidual(s3_out, s3_out, stride=1, expand_ratio=2),
+            PFLDInvertedResidual(s3_out, s3_out, stride=1, expand_ratio=2),
+            PFLDInvertedResidual(s3_out, s3_out, stride=1, expand_ratio=2),
+            PFLDInvertedResidual(s3_out, s3_out, stride=1, expand_ratio=2),
+        )
+        # Stage 4: 1x InvBlock e=2 stride=2 → 32 channels
+        s4_out = c(128)
+        self.stage4 = PFLDInvertedResidual(s3_out, s4_out, stride=2, expand_ratio=2)
+        # Stage 5: 6x InvBlock e=4 stride=1 → 32, c=128
+        self.stage5 = nn.Sequential(
+            *[PFLDInvertedResidual(s4_out, s4_out, stride=1, expand_ratio=4) for _ in range(6)]
+        )
+        # Stage 6: 1x InvBlock e=2 stride=2 → 16, c=16 (PFLD bottleneck)
+        s6_out = c(16)
+        self.stage6 = PFLDInvertedResidual(s4_out, s6_out, stride=2, expand_ratio=2)
+        # Stage 7: Conv 3x3 stride=2 → 8, c=32
+        s7_out = c(32)
+        self.stage7 = ConvBNAct(s6_out, s7_out, 3, stride=2)
+        # Stage 8: Conv on 8x8 → 1x1, c=128
+        s8_out = c(128)
+        self.stage8 = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(s7_out, s8_out, 1, bias=False),
+            nn.BatchNorm2d(s8_out),
+            nn.ReLU(inplace=True),
+        )
+
+        # multi-scale fusion: GAP each scale → concat
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        fused_dim = s6_out + s7_out + s8_out
+
+        if head_type == "pip":
+            # PIP head on stage5 output (32x32). Coarse grid pip_grid x pip_grid via pooling.
+            self.pip_pool = nn.AdaptiveAvgPool2d(pip_grid)
+            self.pip_proj = ConvBNAct(s4_out, s4_out, 1)
+            self.pip_cls_head = nn.Conv2d(s4_out, num_landmarks, 1)
+            self.pip_x_head = nn.Conv2d(s4_out, num_landmarks, 1)
+            self.pip_y_head = nn.Conv2d(s4_out, num_landmarks, 1)
+            self.landmark_head = None
+        else:
+            self.register_buffer("mean_shape", torch.full((num_landmarks, 2), 0.5), persistent=False)
+            self.landmark_head = nn.Sequential(
+                nn.Linear(fused_dim, num_landmarks * 2),
+            )
+            self.pip_pool = None
+
+        if aux_pose_head:
+            # Auxiliary pose net (used only during training): predicts roll/yaw/pitch from stage3
+            self.aux_pose = nn.Sequential(
+                ConvBNAct(s3_out, c(128), 3, stride=2),
+                ConvBNAct(c(128), c(128), 3, stride=1),
+                ConvBNAct(c(128), c(32), 3, stride=2),
+                nn.AdaptiveAvgPool2d(1),
+                nn.Flatten(),
+                nn.Linear(c(32), 32),
+                nn.ReLU(inplace=True),
+                nn.Linear(32, 3),
+            )
+        else:
+            self.aux_pose = None
+
+    def initialize_landmark_bias(self, mean_shape: torch.Tensor) -> None:
+        if self.landmark_head is None:
+            return
+        with torch.no_grad():
+            bias = mean_shape.flatten() * 4.0 - 2.0  # inverse sigmoid of mean_shape ∈ [0,1]
+            final_linear = self.landmark_head[-1]
+            final_linear.bias.copy_(bias)
+            self.mean_shape.copy_(mean_shape)
+
+    def _pip_to_coordinates(self, cls_logits, x_offset, y_offset):
+        b, n, h, w = cls_logits.shape
+        flat = cls_logits.view(b, n, -1)
+        cell = flat.argmax(dim=-1)
+        cell_y = torch.div(cell, w, rounding_mode="floor")
+        cell_x = cell % w
+        flat_x = x_offset.view(b, n, -1)
+        flat_y = y_offset.view(b, n, -1)
+        gx = torch.gather(flat_x, 2, cell.unsqueeze(-1)).squeeze(-1).sigmoid()
+        gy = torch.gather(flat_y, 2, cell.unsqueeze(-1)).squeeze(-1).sigmoid()
+        coord_x = (cell_x.to(cls_logits.dtype) + gx) / w
+        coord_y = (cell_y.to(cls_logits.dtype) + gy) / h
+        return torch.stack([coord_x, coord_y], dim=-1)
+
+    def forward_train(self, inputs):
+        x = self.stage1(inputs)
+        x = self.stage2(x)
+        s3 = self.stage3(x)
+        s4 = self.stage4(s3)
+        s5 = self.stage5(s4)
+        s6 = self.stage6(s5)
+        s7 = self.stage7(s6)
+        s8 = self.stage8(s7)
+
+        pose = self.aux_pose(s3) if self.aux_pose is not None else None
+
+        if self.head_type == "pip":
+            pooled = self.pip_pool(s5)
+            refined = self.pip_proj(pooled)
+            cls_logits = self.pip_cls_head(refined)
+            x_off = self.pip_x_head(refined)
+            y_off = self.pip_y_head(refined)
+            landmarks = self._pip_to_coordinates(cls_logits, x_off, y_off)
+            return landmarks, pose, {"pip_cls": cls_logits, "pip_x": x_off, "pip_y": y_off}
+
+        # FC head: multi-scale GAP fusion
+        f1 = self.gap(s6).flatten(1)
+        f2 = self.gap(s7).flatten(1)
+        f3 = s8.flatten(1)
+        fused = torch.cat([f1, f2, f3], dim=1)
+        landmarks = self.landmark_head(fused).view(-1, self.num_landmarks, 2).sigmoid()
+        return landmarks, pose, None
+
+    def forward(self, inputs):
+        landmarks, _, _ = self.forward_train(inputs)
+        return landmarks
+
+
 def build_model(config: dict) -> LMNet:
     model_config = config["model"]
     architecture = str(model_config.get("arch", "lmnet"))
@@ -759,6 +930,14 @@ def build_model(config: dict) -> LMNet:
             num_landmarks=int(config["data"]["num_landmarks"]),
             base_channels=int(model_config.get("base_channels", 32)),
             num_blocks=int(model_config.get("num_blocks", 2)),
+        )
+    if architecture == "pfld":
+        return PFLDNet(
+            num_landmarks=int(config["data"]["num_landmarks"]),
+            width_mult=float(model_config.get("width_mult", 1.0)),
+            head_type=str(model_config.get("head_type", "fc")),
+            pip_grid=int(model_config.get("pip_grid", 8)),
+            aux_pose_head=bool(model_config.get("pose_head", True)),
         )
     if architecture == "resnet18_deconv":
         return ResNetDeconvHeatmapNet(
