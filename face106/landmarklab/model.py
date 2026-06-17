@@ -922,6 +922,197 @@ class PFLDNet(nn.Module):
         return landmarks
 
 
+class MNV3InvertedResidual(nn.Module):
+    """MobileNetV3-style inverted residual: pw expand → dw 3x3 → SE → pw project."""
+
+    def __init__(self, in_ch: int, out_ch: int, stride: int, expand: int, use_se: bool = True) -> None:
+        super().__init__()
+        hidden = in_ch * expand
+        self.use_residual = stride == 1 and in_ch == out_ch
+        layers: list[nn.Module] = []
+        if expand != 1:
+            layers.append(ConvBNAct(in_ch, hidden, 1))
+        layers.append(ConvBNAct(hidden, hidden, 3, stride=stride, groups=hidden))
+        if use_se:
+            layers.append(SqueezeExcitation(hidden))
+        layers.extend([nn.Conv2d(hidden, out_ch, 1, bias=False), nn.BatchNorm2d(out_ch)])
+        self.block = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.block(x)
+        if self.use_residual:
+            out = out + x
+        return out
+
+
+class MRFFNNet(nn.Module):
+    """Multi-Resolution Feature-pyramid + Face-shape Network.
+
+    Components:
+    1. MobileNetV3-style backbone producing 4 scales: F1(64x64), F2(32x32), F3(16x16), F4(8x8)
+    2. FPN top-down lateral fusion to D=32 channels at each scale
+    3. Coarse heatmap head on P2 (32x32, upsampled to 64x64 via the prior pyramid level)
+    4. PCA Shape Prior Module: predict K mixing coefficients from global feature
+       and combine with mean shape + per-point residual
+
+    Designed for INT8 ≤ 2 MB (ICME 2021 limit). Predicted ~1M params.
+    """
+
+    def __init__(
+        self,
+        *,
+        num_landmarks: int = 106,
+        width_mult: float = 1.0,
+        fpn_dim: int = 32,
+        heatmap_size: int = 64,
+        pca_basis: int = 8,
+        use_pca: bool = True,
+        pca_npz_path: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.num_landmarks = num_landmarks
+        self.heatmap_size = heatmap_size
+        self.heatmap_temperature = 8.0
+        self.use_pca = use_pca
+        self._num_pca_basis = pca_basis
+
+        c = lambda n: _round_channels(n, width_mult)
+        # Stem: 256 → 128, 16 ch
+        self.stem = nn.Sequential(
+            ConvBNAct(3, c(16), 3, stride=2),
+            MNV3InvertedResidual(c(16), c(16), stride=1, expand=1, use_se=False),
+        )
+        # Stage 1: 128 → 64, c(24)  (F1)
+        self.stage1 = nn.Sequential(
+            MNV3InvertedResidual(c(16), c(24), stride=2, expand=4, use_se=False),
+            MNV3InvertedResidual(c(24), c(24), stride=1, expand=3, use_se=False),
+        )
+        # Stage 2: 64 → 32, c(40)  (F2)
+        self.stage2 = nn.Sequential(
+            MNV3InvertedResidual(c(24), c(40), stride=2, expand=4, use_se=True),
+            MNV3InvertedResidual(c(40), c(40), stride=1, expand=4, use_se=True),
+            MNV3InvertedResidual(c(40), c(40), stride=1, expand=4, use_se=True),
+        )
+        # Stage 3: 32 → 16, c(80)  (F3)
+        self.stage3 = nn.Sequential(
+            MNV3InvertedResidual(c(40), c(80), stride=2, expand=6, use_se=True),
+            MNV3InvertedResidual(c(80), c(80), stride=1, expand=6, use_se=True),
+            MNV3InvertedResidual(c(80), c(80), stride=1, expand=6, use_se=True),
+            MNV3InvertedResidual(c(80), c(80), stride=1, expand=6, use_se=True),
+        )
+        # Stage 4: 16 → 8, c(128) (F4)
+        self.stage4 = nn.Sequential(
+            MNV3InvertedResidual(c(80), c(128), stride=2, expand=6, use_se=True),
+            MNV3InvertedResidual(c(128), c(128), stride=1, expand=6, use_se=True),
+        )
+
+        # FPN lateral 1x1 + smooth 3x3 (top-down)
+        self.lateral_f1 = nn.Conv2d(c(24), fpn_dim, 1)
+        self.lateral_f2 = nn.Conv2d(c(40), fpn_dim, 1)
+        self.lateral_f3 = nn.Conv2d(c(80), fpn_dim, 1)
+        self.lateral_f4 = nn.Conv2d(c(128), fpn_dim, 1)
+        self.smooth_p1 = ConvBNAct(fpn_dim, fpn_dim, 3)
+        self.smooth_p2 = ConvBNAct(fpn_dim, fpn_dim, 3)
+        self.smooth_p3 = ConvBNAct(fpn_dim, fpn_dim, 3)
+
+        # Coarse heatmap head on P1 (64x64)
+        self.coarse_head = nn.Conv2d(fpn_dim, num_landmarks, 1)
+
+        # PCA Shape Prior Module
+        if use_pca:
+            self.pca_global_pool = nn.AdaptiveAvgPool2d(1)
+            self.pca_coef_head = nn.Sequential(
+                nn.Linear(c(128), 64),
+                nn.ReLU(inplace=True),
+                nn.Linear(64, pca_basis),
+            )
+            # Residual MLP from coarse coords
+            self.pca_residual_head = nn.Sequential(
+                nn.Linear(num_landmarks * 2, 128),
+                nn.ReLU(inplace=True),
+                nn.Linear(128, num_landmarks * 2),
+            )
+            # Buffers (filled at init / via load_pca)
+            self.register_buffer("pca_mean_shape", torch.full((num_landmarks, 2), 0.5))
+            self.register_buffer("pca_basis", torch.zeros(pca_basis, num_landmarks, 2))
+            # Learnable scaling for residual blend (start small)
+            self.residual_scale = nn.Parameter(torch.tensor(0.1))
+            if pca_npz_path is not None:
+                self.load_pca(pca_npz_path)
+
+    def load_pca(self, npz_path: str) -> None:
+        import numpy as np
+        data = np.load(npz_path)
+        mean = torch.from_numpy(data["mean_shape"]).float()  # (106, 2)
+        basis = torch.from_numpy(data["basis"]).float()  # (K, 106, 2)
+        if basis.shape[0] >= self._num_pca_basis:
+            basis = basis[: self._num_pca_basis]
+        else:
+            raise ValueError(
+                f"PCA file has only {basis.shape[0]} basis vectors, need {self._num_pca_basis}"
+            )
+        self.pca_mean_shape.copy_(mean)
+        self.pca_basis.copy_(basis)
+        print(f"[MRFFNNet] loaded PCA: mean_shape range=[{mean.min():.3f}, {mean.max():.3f}], "
+              f"basis shape={tuple(basis.shape)}")
+
+    def _heatmap_to_coords(self, heatmap: torch.Tensor) -> torch.Tensor:
+        b, n, h, w = heatmap.shape
+        logits = heatmap.view(b, n, -1) * self.heatmap_temperature
+        prob = torch.softmax(logits, dim=-1)
+        grid_y, grid_x = torch.meshgrid(
+            torch.linspace(0.0, 1.0, h, device=heatmap.device),
+            torch.linspace(0.0, 1.0, w, device=heatmap.device),
+            indexing="ij",
+        )
+        cx = (prob * grid_x.reshape(1, 1, -1)).sum(dim=-1)
+        cy = (prob * grid_y.reshape(1, 1, -1)).sum(dim=-1)
+        return torch.stack([cx, cy], dim=-1)
+
+    def forward_train(self, inputs: torch.Tensor):
+        x = self.stem(inputs)
+        f1 = self.stage1(x)   # 64x64
+        f2 = self.stage2(f1)  # 32x32
+        f3 = self.stage3(f2)  # 16x16
+        f4 = self.stage4(f3)  # 8x8
+
+        # FPN top-down
+        p4 = self.lateral_f4(f4)
+        p3 = self.smooth_p3(self.lateral_f3(f3) + F.interpolate(p4, size=f3.shape[-2:], mode="nearest"))
+        p2 = self.smooth_p2(self.lateral_f2(f2) + F.interpolate(p3, size=f2.shape[-2:], mode="nearest"))
+        p1 = self.smooth_p1(self.lateral_f1(f1) + F.interpolate(p2, size=f1.shape[-2:], mode="nearest"))
+
+        # Coarse heatmap on P1 (64x64) — matches HRNet teacher output size
+        heatmap = self.coarse_head(p1)
+        coarse_coords = self._heatmap_to_coords(heatmap)
+
+        if not self.use_pca:
+            return coarse_coords, None, heatmap
+
+        # PCA module: predict mixing coefs from global feature, residual from coarse coords
+        global_feat = self.pca_global_pool(f4).flatten(1)  # (B, c(128))
+        coefs = self.pca_coef_head(global_feat)  # (B, K)
+        # Reconstruct shape from PCA: mean + sum(coef * basis)
+        # mean_shape: (106, 2), basis: (K, 106, 2), coefs: (B, K)
+        flat_basis = self.pca_basis.view(self._num_pca_basis, -1)  # (K, 212)
+        flat_mean = self.pca_mean_shape.view(-1)  # (212,)
+        pca_recon = flat_mean[None, :] + coefs @ flat_basis  # (B, 212)
+        pca_recon = pca_recon.view(-1, self.num_landmarks, 2)
+
+        # Residual from coarse coords
+        residual = self.pca_residual_head(coarse_coords.flatten(1))  # (B, 212)
+        residual = residual.view(-1, self.num_landmarks, 2)
+
+        # Combine: PCA reconstruction + residual scaling × coord-residual
+        landmarks = pca_recon + self.residual_scale * residual
+        landmarks = landmarks.clamp(0.0, 1.0)
+        return landmarks, None, heatmap
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        landmarks, _, _ = self.forward_train(inputs)
+        return landmarks
+
+
 def build_model(config: dict) -> LMNet:
     model_config = config["model"]
     architecture = str(model_config.get("arch", "lmnet"))
@@ -938,6 +1129,16 @@ def build_model(config: dict) -> LMNet:
             head_type=str(model_config.get("head_type", "fc")),
             pip_grid=int(model_config.get("pip_grid", 8)),
             aux_pose_head=bool(model_config.get("pose_head", True)),
+        )
+    if architecture == "mrffn":
+        return MRFFNNet(
+            num_landmarks=int(config["data"]["num_landmarks"]),
+            width_mult=float(model_config.get("width_mult", 1.0)),
+            fpn_dim=int(model_config.get("fpn_dim", 32)),
+            heatmap_size=int(model_config.get("heatmap_size", 64)),
+            pca_basis=int(model_config.get("pca_basis", 8)),
+            use_pca=bool(model_config.get("use_pca", True)),
+            pca_npz_path=model_config.get("pca_npz_path"),
         )
     if architecture == "resnet18_deconv":
         return ResNetDeconvHeatmapNet(
