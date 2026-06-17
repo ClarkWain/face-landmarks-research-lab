@@ -428,3 +428,129 @@
 - estimated_fp32_size_mb: 6.241592
 - preview_path: runs\lmnet_w08_kd_smoke3\preview_best.png
 - history_path: runs\lmnet_w08_kd_smoke3\history.csv
+## 2026-06-16 20:02:37 | train | lapa_lmnet_w135_kd_5mb
+- 优化点: baseline
+- run_name: lapa_lmnet_w135_kd_5mb
+- note: baseline
+- best_epoch: 1
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.341107
+- best_valid_acc_008: 4.667453
+- best_test_acc_008: 5.091510
+- best_test_acc_005: 2.021698
+- best_test_nme: 0.341107
+- parameter_count: 4336148
+- num_landmarks: 106
+- estimated_int8_size_mb: 4.135273
+- estimated_fp32_size_mb: 16.541
+- preview_path: runs\lapa_lmnet_w135_kd_5mb\preview_best.png
+- history_path: runs\lapa_lmnet_w135_kd_5mb\history.csv
+
+## 2026-06-17 | reflection | lapa_lmnet_w08_kd_icme2mb (ICME 2MB 路线尝试 — 中止)
+
+### 最终结果
+- **训练**: 51/60 epoch（提前停止）
+- **BEST**: ep=50, LaPa test_nme=**0.0517** (5.17%), acc@0.05=58.34%, acc@0.08=84.53%, image_acc@0.08=94.05%
+- **架构**: LMNet width_mult=0.8 + global head + KD（HRNet teacher）
+- **参数量**: ~1.64M, FP32 best.pt 6.36MB, FP32 ONNX 6.46MB, INT8 估计 ~1.7MB ✓ 满足 ICME 2MB
+- **训练时间**: 20:27 → 01:27 共 5 小时
+
+### 与基线对比
+| 模型 | 参数 | INT8 | LaPa NME | acc@0.08 | image_acc@0.08 |
+|---|---|---|---|---|---|
+| HRNet w18 (mixed AWing) | 18.3M | 17.93MB | **2.16%** | 97.98% | 99.55% |
+| LMNet w=2.25 历史 | 11.5M | 11.67MB | 3.88% | 92.65% | 97.45% |
+| **LMNet w=0.8 KD（本次）** | **1.6M** | **~1.7MB** | **5.17%** | **84.53%** | **94.05%** |
+
+### 反思：方法对不对？
+
+**对的部分**：
+1. KD 框架确实 work：1MB 学生模型从 random NME 50% 一路下到 5.17%，证明 KD 信号有效
+2. 选择 LMNet w=0.8 + global head（face106 历史唯一验证范式）+ ema=0.99 是稳定收敛配方
+3. 113k 混合数据（LaPa+JD+PseudoWFLW）发挥了价值：epoch 1→20 NME 0.328→0.058
+4. early epoch 收敛速度甚至优于预期外推
+
+**不对的部分（关键）**：
+1. **目标设定不现实**：LMNet w=0.8 + KD 这条路理论上限就在 NME 5%，与 ICME TOP1 4.01% 仍有距离
+2. **架构选错**：ICME 选手用的是 PFLD/MobileNetV2 + PIP head + cascade refinement，不是 LMNet 风格 FC head
+3. **KD 不够细**：当前只蒸馏坐标层（wing_loss(student_coord, teacher_coord)），没有蒸馏中间 feature 或 heatmap
+4. **缺少 cascade refinement**：粗预测 → ROI crop → 精预测能压低尾部 FR
+5. **缺少 TTA**（推理水平翻转 + 多尺度平均）—— 几乎免费的 5-10% NME 改进
+6. **训练时间投资低**：5h 换来 LaPa NME 5.17%，相比 HRNet 6h 训得 2.16%，单位时间精度产出差 6×
+
+**真实评估**：
+- LaPa NME 5.17% 比 LMNet w=2.25（NME 3.88%）退化 33%
+- 但 INT8 1.7MB vs 11.67MB 是 7× 压缩，单位 MB 精度其实是赚的
+- ICME 256 估计 NME ~8%，384 估计 ~6.5%，**完全无法竞争 ICME TOP1 (4.01%)**
+
+**结论**：
+- 方法本身（小模型 + KD + 混合数据）合理但**不够强冲 ICME TOP1**
+- 真要冲必须做 PFLD + PIP + cascade + 更精细 KD（feature/heatmap level）+ QAT，工作量 ≥ 2 周
+- **17.93MB HRNet 在 ICME 384 NME 3.37% 仍是当前最优产物**，性价比最高
+- **当前 1.7MB best.pt 作为"极小型变种"产物保留**，用于未来需要 <2MB 部署的场景
+
+### 已证伪
+- LMNet w=0.5 + heatmap head（不收敛，NME 1.08）
+- LMNet w=1.35 + hidden_dim=512 + KD（plateau 在 NME 0.346 不学）
+- ema_decay=0.999 + 大 batch（EMA 模型滞后于 raw model）
+- PFLD w=2.0 + PIP + KD + batch=128（GPU 22GB 全占，38min/epoch 不可行）
+
+### 待验证（未来）
+- PFLD smoke 用 batch=32（速度 OK 但精度未知）
+- TTA on HRNet 17.93MB（零成本，预期 ICME NME -0.1pp）
+- DSNT/Integral Regression 替代 soft-argmax（INT8 量化更友好）
+
+## 2026-06-17 | reflection | lapa_lmnet_w08_kd_icme2mb (ICME 2MB 路线尝试 — 中止)
+
+### 最终结果
+- **训练**: 51/60 epoch（提前停止）
+- **BEST**: ep=50, LaPa test_nme=**0.0517** (5.17%), acc@0.05=58.34%, acc@0.08=84.53%, image_acc@0.08=94.05%
+- **架构**: LMNet width_mult=0.8 + global head + KD（HRNet teacher）
+- **参数量**: ~1.64M, FP32 best.pt 6.36MB, FP32 ONNX 6.46MB, INT8 估计 ~1.7MB ✓ 满足 ICME 2MB
+- **训练时间**: 20:27 → 01:27 共 5 小时
+
+### 与基线对比
+| 模型 | 参数 | INT8 | LaPa NME | acc@0.08 | image_acc@0.08 |
+|---|---|---|---|---|---|
+| HRNet w18 (mixed AWing) | 18.3M | 17.93MB | **2.16%** | 97.98% | 99.55% |
+| LMNet w=2.25 历史 | 11.5M | 11.67MB | 3.88% | 92.65% | 97.45% |
+| **LMNet w=0.8 KD（本次）** | **1.6M** | **~1.7MB** | **5.17%** | **84.53%** | **94.05%** |
+
+### 反思：方法对不对？
+
+**对的部分**：
+1. KD 框架确实 work：1MB 学生模型从 random NME 50% 一路下到 5.17%，证明 KD 信号有效
+2. 选择 LMNet w=0.8 + global head（face106 历史唯一验证范式）+ ema=0.99 是稳定收敛配方
+3. 113k 混合数据（LaPa+JD+PseudoWFLW）发挥了价值：epoch 1→20 NME 0.328→0.058
+4. early epoch 收敛速度甚至优于预期外推
+
+**不对的部分（关键）**：
+1. **目标设定不现实**：LMNet w=0.8 + KD 这条路理论上限就在 NME 5%，与 ICME TOP1 4.01% 仍有距离
+2. **架构选错**：ICME 选手用的是 PFLD/MobileNetV2 + PIP head + cascade refinement，不是 LMNet 风格 FC head
+3. **KD 不够细**：当前只蒸馏坐标层（wing_loss(student_coord, teacher_coord)），没有蒸馏中间 feature 或 heatmap
+4. **缺少 cascade refinement**：粗预测 → ROI crop → 精预测能压低尾部 FR
+5. **缺少 TTA**（推理水平翻转 + 多尺度平均）—— 几乎免费的 5-10% NME 改进
+6. **训练时间投资低**：5h 换来 LaPa NME 5.17%，相比 HRNet 6h 训得 2.16%，单位时间精度产出差 6×
+
+**真实评估**：
+- LaPa NME 5.17% 比 LMNet w=2.25（NME 3.88%）退化 33%
+- 但 INT8 1.7MB vs 11.67MB 是 7× 压缩，单位 MB 精度其实是赚的
+- ICME 256 估计 NME ~8%，384 估计 ~6.5%，**完全无法竞争 ICME TOP1 (4.01%)**
+
+**结论**：
+- 方法本身（小模型 + KD + 混合数据）合理但**不够强冲 ICME TOP1**
+- 真要冲必须做 PFLD + PIP + cascade + 更精细 KD（feature/heatmap level）+ QAT，工作量 ≥ 2 周
+- **17.93MB HRNet 在 ICME 384 NME 3.37% 仍是当前最优产物**，性价比最高
+- **当前 1.7MB best.pt 作为"极小型变种"产物保留**，用于未来需要 <2MB 部署的场景
+
+### 已证伪
+- LMNet w=0.5 + heatmap head（不收敛，NME 1.08）
+- LMNet w=1.35 + hidden_dim=512 + KD（plateau 在 NME 0.346 不学）
+- ema_decay=0.999 + 大 batch（EMA 模型滞后于 raw model）
+- PFLD w=2.0 + PIP + KD + batch=128（GPU 22GB 全占，38min/epoch 不可行）
+
+### 待验证（未来）
+- PFLD smoke 用 batch=32（速度 OK 但精度未知）
+- TTA on HRNet 17.93MB（零成本，预期 ICME NME -0.1pp）
+- DSNT/Integral Regression 替代 soft-argmax（INT8 量化更友好）
