@@ -1,0 +1,78 @@
+run_name: lapa_pfld_w20_kd_pip_budget32_e20_continue
+seed: 3407
+
+system:
+  output_root: runs
+
+data:
+  dataset: lapa_mixed
+  root: ../data
+  lapa_root: ../data/LaPa
+  image_size: 256
+  num_landmarks: 106
+  enable_hflip: false
+  metric_eye_groups:
+    - [66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79]
+    - [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93]
+  valid_ratio: 0.1
+  test_ratio: 0.1
+  download: false
+  num_workers: 0
+  train_subset: null
+  valid_subset: null
+  test_subset: null
+  crop_scale: 1.35
+  aug_scale_range: [0.85, 1.25]
+  aug_shift: 0.08
+  mixed:
+    jd_root: ../data/jd_landmark/FLL3_dataset
+    pseudo_wflw_csv: data/wflw_pseudo_106/train_data.csv
+    max_jd_samples: null
+    max_pseudo_wflw_samples: null
+    sampling_weights:
+      lapa: 4.0
+      jd_landmark: 2.0
+      pseudo_wflw: 1.0
+    epoch_steps: 128
+
+model:
+  arch: pfld
+  width_mult: 2.0
+  head_type: pip
+  pip_grid: 8
+  pose_head: false
+
+train:
+  epochs: 17
+  batch_size: 32
+  lr: 0.001
+  weight_decay: 0.01
+  amp: true
+  grad_clip: 1.0
+  ema_decay: 0.99
+  label_smoothing: 0.0
+  log_interval_steps: 32
+  init_mean_shape: false
+  scheduler: cosine
+  min_lr: 0.000001
+  use_ema: true
+  select_metric: test_nme
+  select_mode: min
+  early_stop_patience: 5
+  finetune_checkpoint: runs/lapa_pfld_w20_kd_pip_budget32_e3/best.pt
+  distill_teacher_checkpoint: runs/lapa_hrnet_w18_awing_mixed_e80/best.pt
+
+loss:
+  wing_w: 0.04
+  wing_epsilon: 0.01
+  coord_weight: 1.0
+  geometry_weight: 0.05
+  pose_weight: 0.05
+  heatmap_weight: 0.0
+  pip_cls_weight: 1.0
+  pip_offset_weight: 1.0
+  distill_weight: 0.5
+
+eval:
+  primary_threshold: 0.08
+  viz_samples: 24

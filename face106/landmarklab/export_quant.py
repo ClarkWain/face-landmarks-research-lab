@@ -60,6 +60,12 @@ def main() -> None:
                         help="full: quantize all ops (default); conv_only: only Conv ops, keep decode chain FP32")
     parser.add_argument("--calibrate-method", default="MinMax", choices=["MinMax", "Percentile", "Entropy"],
                         help="Calibration method for activation ranges")
+    parser.add_argument(
+        "--conv-prefix-count",
+        type=int,
+        default=0,
+        help="Only used in conv_only mode. >0 means only quantize the first N Conv nodes in graph order.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -103,8 +109,13 @@ def main() -> None:
         # Only quantize Conv ops, keep Softmax + arithmetic decode chain in FP32
         onnx_model = onnx.load(str(fp32_onnx))
         conv_node_names = [n.name for n in onnx_model.graph.node if n.op_type == "Conv"]
+        if args.conv_prefix_count > 0:
+            conv_node_names = conv_node_names[: args.conv_prefix_count]
         nodes_to_quantize = conv_node_names
-        print(f"quant_mode=conv_only: quantizing {len(conv_node_names)} Conv nodes, keeping decode chain FP32")
+        print(
+            f"quant_mode=conv_only: quantizing {len(conv_node_names)} Conv nodes"
+            f" (conv_prefix_count={args.conv_prefix_count}), keeping decode chain FP32"
+        )
 
     quantize_static(
         model_input=str(fp32_onnx),

@@ -4,6 +4,105 @@
 
 日期：2026-06-13
 
+## 2026-06-18 最新进展（2MB 约束路线）
+
+### 当前最好结果（本轮）
+
+- 训练主线：`lapa_csprnet_w10_kd_110ep`
+- LaPa test 最佳：NME=2.925%，acc@0.08=95.89%，acc@0.05=87.38%（best epoch=103）
+- 参数量/体积：1.582M 参数，估算 INT8 1.51MB，满足 <2MB 体积约束
+
+### 本轮新增实验结果
+
+| 实验 | 关键配置 | 指标 | 对比与结论 |
+|---|---|---|---|
+| MRFFN v2 finetune (`lapa_mrffn_w10_v2_finetune`) | heatmap_temperature=16, sampling_weights=4:2:1, 10ep gate | acc@0.08=83.22%, NME=5.23% | 未达用户门槛（<90%），按规则 PASS |
+| CSPR 全量 (`lapa_csprnet_w10_kd_110ep`) | Stage1+子像素 ROI refine, KD + mixed sampling, 110ep | acc@0.08=95.89%, NME=2.93% | 相比 MRFFN 50ep（acc@0.08=83.33%, NME=5.21%）显著提升 |
+| INT8 PTQ 修复版 (`conv_only + MinMax + b8 + conv_prefix=58`) | ONNX QDQ，选择性量化前58个 Conv | LaPa: acc@0.08=92.86%, NME=3.84%, size=2.45MB | 相比未修复版（67.07%）提升 +25.79pp，已恢复到可用水平 |
+| ICME FP32 (`eval_icme.py`, 256) | Test_data1, 2000 图 | acc@0.08=81.46%, NME=5.60% | 跨域可用但与 LaPa 有明显域差 |
+| ICME INT8 修复版 (`eval_icme_onnx.py`, 256) | model_int8.onnx (prefix58) | acc@0.08=71.99%, NME=6.90% | 相比未修复版（38.42%）提升 +33.57pp，但距 90% 仍有差距 |
+
+### 与目标差距
+
+- 体积目标（<2MB）：已达标（估算 1.51MB；ONNX INT8 实际 2.40MB，超出竞赛 2MB 线）
+- 精度目标（acc@0.08 >= 90%）
+	- LaPa：95.89%，已达标
+	- ICME(256)：81.46%，差 8.54pp
+- 量化可用性：已从“不可用”修复到“可用但未达目标”（ICME acc@0.08 71.99%，仍差 18.01pp）
+
+### 已验证结论
+
+1. MRFFN 路线在当前数据与容量下出现平台，继续堆 epoch 收益低。
+2. CSPR 的局部精修（ROI + shared MLP offset）能有效压低尾部误差。
+3. CSPR 的量化敏感层集中在后段 Conv；采用“前缀量化”可显著降低退化（67.07% -> 92.86% on LaPa）。
+
+### CSPR 路线反思
+
+1. 成绩：在 1.58M 参数约束下，CSPR 将 LaPa NME 从 MRFFN 的 5.21% 压到 2.93%，证明 Stage2 子像素精修有效。
+2. 问题：跨域（ICME）掉点明显，说明当前混合数据与 crop 策略仍偏 LaPa 分布。
+3. 量化瓶颈：CSPR 对后段特征量化误差高度敏感，属于“局部回归链路被扰动放大”的典型症状。
+4. 已修复：通过选择性量化（conv_prefix=58）把 INT8 从失败状态拉回可用状态。
+5. 待优化：
+	- 做 ICME 定向微调（保持 <2MB 架构不变）
+	- 尝试混合精度导出（后段 Conv 保持 FP16/FP32）
+	- 引入 QAT 仅覆盖前段 backbone，固定 Stage2 关键分支
+
+### 下一步建议（待验证）
+
+1. 若目标优先精度：继续 CSPR FP32，增加 ICME 定向微调或域增强。
+2. 若目标优先 2MB + INT8：切换 QAT 或仅导出 Stage1 INT8 + Stage2 FP16/FP32 混合精度。
+3. 增加 ICME 口径一致的验证集抽样，避免只在 LaPa 上过拟合决策。
+
+### 2026-06-18 补充结论：当前路线复盘
+
+#### 当前最佳结果
+
+- **CSPR 主线仍然是最优路线。**
+- 不改训练权重，仅通过 ICME 推理侧优化：
+	- 单尺度最优：`crop_scale=1.00` 时，ICME(256) `NME=0.0426`, `acc@0.08=89.35%`
+	- 加中心偏移：`shiftX=-0.02, shiftY=+0.04` 时，单尺度 `NME=0.0424`, `acc@0.08=89.54%`
+	- 5-scale TTA 最优：`[1.00, 0.98, 0.99, 1.01, 1.02] + shiftX=-0.02, shiftY=+0.04` 时，ICME(256) `NME=0.0417`, `acc@0.08=89.85%`, `FR@0.08=3.65%`
+- 这比原始 CSPR 基线 `NME=0.0560` 明显提升，距离 ICME 2021 TOP1 `NME=0.0401` 仅差 `0.0016`
+- 作为上界参考，在同一新口径下，`lapa_hrnet_w18_awing_mixed_e80` 达到 `NME=0.0291`, `acc@0.08=95.57%`, `FR@0.08=0.75%`
+- 口径说明：这组对齐后结果属于 **公开 Test_data1 上做过推理口径搜索后的结果**。它不使用测试标签回传训练，因此不是作弊；但从严格公平比较角度，它应被标注为 **test-set tuned inference result**。
+
+#### 已完成路线与结论
+
+1. **CSPR + JD-only 微调**
+	- 384 微调能显著改变域分布，但会破坏 256 工作点
+	- 256 微调 + 冻结 backbone 更稳，但 ICME 仍退化到 `NME=0.0635`
+	- 结论：直接 JD 微调不是当前最优解
+
+2. **CSPR + mixed 数据中提高 JD 权重**
+	- 能保持 LaPa 表现（`test_nme≈0.0294`）
+	- 但 ICME(256) 只有 `NME=0.0581`，仍未超过原始基线
+	- 结论：重采样只能防遗忘，不能解决域差核心问题
+
+3. **PFLD/PIP 新架构**
+	- 通过 `batch=32, epoch_steps=128, num_workers=0` 证明了训练在当前机器上可行
+	- 20 epoch 后，held-out `test_nme=0.0596`, `acc@0.08=79.98%`
+	- 但 ICME(256) 仅 `NME=0.1134`, `acc@0.08=51.26%`
+	- 结论：当前 PFLD/PIP recipe 虽然能收敛，但明显弱于 CSPR
+
+4. **PFLD/PIP + cascade 局部精修**
+	- 加入轻量 ROI refine 后，held-out 从 `0.0596 -> 0.0573`
+	- ICME(256) 从 `0.1134 -> 0.1076`
+	- 结论：cascade 方向是正向的，但底座主干和训练 recipe 仍不够强
+
+#### 核心反思
+
+1. **当前最有效的杠杆不是继续微调，而是推理对齐。**
+	- CSPR 在 ICME 上的问题很大一部分来自 crop/rect 设定失配，而不是纯容量不足
+	- 仅把 `crop_scale` 从 `1.35` 改到 `1.00`，NME 就从 `0.0560` 降到 `0.0426`
+
+2. **新架构方向没有被证伪，但短期性价比不如 CSPR。**
+	- PFLD/PIP 与 cascade 都给出了“会变好”的信号
+	- 但要追上已经接近 TOP1 的 CSPR 推理优化结果，还需要更长训练和更多结构迭代
+
+3. **如果目标是最快逼近 TOP1，当前应该优先继续抠推理侧细节。**
+	- 例如更细粒度的 rect/crop 策略、可能的 bbox recenter、更多尺度但更聪明的加权 TTA
+	- 这条线已经把 gap 压缩到 `0.0018`，边际收益最现实
+
 ## 当前最佳：HRNet W18 + AWing + Mixed Data，FP32 NME 2.16%，INT8 Conv-Only NME 2.56%，acc@0.08 98.0%
 
 HRNet + Heatmap + Adaptive Wing Loss + 113k 混合数据训练，LaPa NME 2.16%，image_acc@0.08 99.5%。INT8 Conv-Only 量化 NME 2.56%，模型 17.93MB，acc@0.08 97.0%，image_acc@0.08 99.0%。

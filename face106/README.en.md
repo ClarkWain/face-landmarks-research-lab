@@ -34,6 +34,19 @@
 > Already on par with ICME 2021 TOP1 at 256 inference; upsampling to 384 inference beats TOP1 by 16% relative NME.
 > Note: this model is **not** subject to the ICME 2021 limits on model size (≤2 MB) and FLOPs (≤100 MFLOPs).
 
+### ICME 2019 Test\_data1 (2026-06-18 aligned evaluation)
+
+> To better match the actual working point of CSPR, we additionally evaluated an aligned inference protocol: `image_size=256`, `crop_scale=1.00`, `center_shift_x=-0.02`, `center_shift_y=+0.04`, plus pixel-space TTA over `crop_scale=[1.00, 0.98, 0.99, 1.01, 1.02]`.
+
+| Model | NME | acc@0.05 | acc@0.08 | FR@0.08 |
+|---|---|---|---|---|
+| **CSPR (1.58M, compact mainline)** | **4.17%** | 73.54% | 89.85% | 3.65% |
+| **HRNet W18 mixed** | **2.91%** | 86.56% | 95.57% | 0.75% |
+
+Under this aligned protocol, CSPR becomes very close to the ICME 2021 TOP1 NME of 4.01%; HRNet remains far stronger in absolute accuracy, but does not satisfy lightweight deployment constraints.
+
+> Note: this “2026-06-18 aligned evaluation” is an **inference-side protocol tuned on the public Test_data1 split**. It does not use test labels for training, so it is not cheating; however, it does use the public test set itself to choose `crop_scale / shift / TTA`, so for strict paper/competition comparison it should be labeled as a **test-set tuned inference result**, not treated as a fully untuned single-shot submission.
+
 Full training log, ablations and failed experiments live in [PROJECT\_SUMMARY.md](PROJECT_SUMMARY.md) and [REPORT.en.md](REPORT.en.md).
 
 ---

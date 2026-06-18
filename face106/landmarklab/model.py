@@ -789,12 +789,19 @@ class PFLDNet(nn.Module):
         head_type: str = "fc",
         pip_grid: int = 8,
         aux_pose_head: bool = True,
+        roi_size: int = 4,
+        roi_channels: int = 16,
+        mlp_hidden: int = 64,
+        refinement_scale: float | None = None,
     ) -> None:
         super().__init__()
         self.num_landmarks = num_landmarks
         self.head_type = head_type
         self.pip_grid = pip_grid
         self.use_pose_head = aux_pose_head
+        self.roi_size = roi_size
+        self.roi_channels = roi_channels
+        self.mlp_hidden = mlp_hidden
 
         c = lambda n: _round_channels(n, width_mult)
         # Stage 1+2: 256→128→128 (stride 2 then stride 1)
@@ -835,13 +842,33 @@ class PFLDNet(nn.Module):
         self.gap = nn.AdaptiveAvgPool2d(1)
         fused_dim = s6_out + s7_out + s8_out
 
-        if head_type == "pip":
+        if head_type in {"pip", "pip_cascade"}:
             # PIP head on stage5 output (32x32). Coarse grid pip_grid x pip_grid via pooling.
             self.pip_pool = nn.AdaptiveAvgPool2d(pip_grid)
             self.pip_proj = ConvBNAct(s4_out, s4_out, 1)
             self.pip_cls_head = nn.Conv2d(s4_out, num_landmarks, 1)
             self.pip_x_head = nn.Conv2d(s4_out, num_landmarks, 1)
             self.pip_y_head = nn.Conv2d(s4_out, num_landmarks, 1)
+            if head_type == "pip_cascade":
+                self.roi_proj = nn.Conv2d(s4_out, roi_channels, 1)
+                roi_feat_dim = roi_channels * roi_size * roi_size
+                self.refinement_mlp = nn.Sequential(
+                    nn.Linear(roi_feat_dim, mlp_hidden),
+                    nn.ReLU(inplace=True),
+                    nn.Linear(mlp_hidden, mlp_hidden // 2),
+                    nn.ReLU(inplace=True),
+                    nn.Linear(mlp_hidden // 2, 2),
+                )
+                if refinement_scale is None:
+                    refinement_scale = float(roi_size) / 32.0
+                self.refinement_range = refinement_scale
+                last = self.refinement_mlp[-1]
+                nn.init.zeros_(last.weight)
+                nn.init.zeros_(last.bias)
+            else:
+                self.roi_proj = None
+                self.refinement_mlp = None
+                self.refinement_range = None
             self.landmark_head = None
         else:
             self.register_buffer("mean_shape", torch.full((num_landmarks, 2), 0.5), persistent=False)
@@ -849,6 +876,9 @@ class PFLDNet(nn.Module):
                 nn.Linear(fused_dim, num_landmarks * 2),
             )
             self.pip_pool = None
+            self.roi_proj = None
+            self.refinement_mlp = None
+            self.refinement_range = None
 
         if aux_pose_head:
             # Auxiliary pose net (used only during training): predicts roll/yaw/pitch from stage3
@@ -888,6 +918,29 @@ class PFLDNet(nn.Module):
         coord_y = (cell_y.to(cls_logits.dtype) + gy) / h
         return torch.stack([coord_x, coord_y], dim=-1)
 
+    def _roi_refine(self, feature_map: torch.Tensor, coarse_coords: torch.Tensor) -> torch.Tensor:
+        batch, num_points, _ = coarse_coords.shape
+        compact = self.roi_proj(feature_map)
+        feature_size = float(feature_map.shape[-1])
+        radius_norm = float(self.roi_size) / (2.0 * feature_size)
+        device = coarse_coords.device
+        offsets_1d = torch.linspace(-radius_norm, radius_norm, self.roi_size, device=device)
+        gy, gx = torch.meshgrid(offsets_1d, offsets_1d, indexing="ij")
+        local_grid = torch.stack([gx, gy], dim=-1)
+
+        center = coarse_coords.unsqueeze(2).unsqueeze(2)
+        sample_xy = (center + local_grid[None, None, :, :, :]) * 2.0 - 1.0
+        sample_grid = sample_xy.reshape(batch, num_points * self.roi_size, self.roi_size, 2)
+
+        sampled = F.grid_sample(compact, sample_grid, mode="bilinear", padding_mode="border", align_corners=True)
+        sampled = sampled.view(batch, self.roi_channels, num_points, self.roi_size, self.roi_size)
+        sampled = sampled.permute(0, 2, 1, 3, 4).contiguous()
+
+        flat = sampled.reshape(batch * num_points, -1)
+        delta = self.refinement_mlp(flat)
+        delta = torch.tanh(delta) * self.refinement_range
+        return delta.view(batch, num_points, 2)
+
     def forward_train(self, inputs):
         x = self.stage1(inputs)
         x = self.stage2(x)
@@ -900,13 +953,16 @@ class PFLDNet(nn.Module):
 
         pose = self.aux_pose(s3) if self.aux_pose is not None else None
 
-        if self.head_type == "pip":
+        if self.head_type in {"pip", "pip_cascade"}:
             pooled = self.pip_pool(s5)
             refined = self.pip_proj(pooled)
             cls_logits = self.pip_cls_head(refined)
             x_off = self.pip_x_head(refined)
             y_off = self.pip_y_head(refined)
             landmarks = self._pip_to_coordinates(cls_logits, x_off, y_off)
+            if self.head_type == "pip_cascade":
+                delta = self._roi_refine(s5, landmarks)
+                landmarks = (landmarks + delta).clamp(0.0, 1.0)
             return landmarks, pose, {"pip_cls": cls_logits, "pip_x": x_off, "pip_y": y_off}
 
         # FC head: multi-scale GAP fusion
@@ -968,11 +1024,12 @@ class MRFFNNet(nn.Module):
         pca_basis: int = 8,
         use_pca: bool = True,
         pca_npz_path: str | None = None,
+        heatmap_temperature: float = 8.0,
     ) -> None:
         super().__init__()
         self.num_landmarks = num_landmarks
         self.heatmap_size = heatmap_size
-        self.heatmap_temperature = 8.0
+        self.heatmap_temperature = heatmap_temperature
         self.use_pca = use_pca
         self._num_pca_basis = pca_basis
 
@@ -1113,6 +1170,119 @@ class MRFFNNet(nn.Module):
         return landmarks
 
 
+class CSPRNet(MRFFNNet):
+    """Cascade Sub-Pixel Refinement Network.
+
+    Stage 1: MR-FFN backbone -> coarse landmarks (PCA-blended)
+    Stage 2: Per-point ROI sampling on P1 features -> shared MLP -> sub-pixel offset
+
+    Designed to push 1.5M-class models beyond ~5% NME plateau without exceeding 2 MB
+    INT8. Sub-pixel refinement targets the tail (10-15%) of points where NME is high.
+    """
+
+    def __init__(
+        self,
+        *,
+        roi_size: int = 4,
+        roi_channels: int = 16,
+        mlp_hidden: int = 64,
+        refinement_scale: float | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.roi_size = roi_size
+        self.roi_channels = roi_channels
+        self.mlp_hidden = mlp_hidden
+
+        fpn_dim = self.lateral_f1.out_channels
+        self.roi_proj = nn.Conv2d(fpn_dim, roi_channels, 1)
+
+        roi_feat_dim = roi_channels * roi_size * roi_size
+        self.refinement_mlp = nn.Sequential(
+            nn.Linear(roi_feat_dim, mlp_hidden),
+            nn.ReLU(inplace=True),
+            nn.Linear(mlp_hidden, mlp_hidden // 2),
+            nn.ReLU(inplace=True),
+            nn.Linear(mlp_hidden // 2, 2),
+        )
+        # Refinement range in normalized [0,1] coords. Default = roi_size / heatmap_size.
+        if refinement_scale is None:
+            refinement_scale = float(roi_size) / float(self.heatmap_size)
+        self.refinement_range = refinement_scale
+
+        # zero-init last layer so refined ≈ stage1 at training start
+        last = self.refinement_mlp[-1]
+        nn.init.zeros_(last.weight)
+        nn.init.zeros_(last.bias)
+
+    def _stage1_forward(self, inputs: torch.Tensor):
+        x = self.stem(inputs)
+        f1 = self.stage1(x)
+        f2 = self.stage2(f1)
+        f3 = self.stage3(f2)
+        f4 = self.stage4(f3)
+
+        p4 = self.lateral_f4(f4)
+        p3 = self.smooth_p3(self.lateral_f3(f3) + F.interpolate(p4, size=f3.shape[-2:], mode="nearest"))
+        p2 = self.smooth_p2(self.lateral_f2(f2) + F.interpolate(p3, size=f2.shape[-2:], mode="nearest"))
+        p1 = self.smooth_p1(self.lateral_f1(f1) + F.interpolate(p2, size=f1.shape[-2:], mode="nearest"))
+
+        heatmap = self.coarse_head(p1)
+        coarse_coords = self._heatmap_to_coords(heatmap)
+
+        if self.use_pca:
+            global_feat = self.pca_global_pool(f4).flatten(1)
+            coefs = self.pca_coef_head(global_feat)
+            flat_basis = self.pca_basis.view(self._num_pca_basis, -1)
+            flat_mean = self.pca_mean_shape.view(-1)
+            pca_recon = (flat_mean[None, :] + coefs @ flat_basis).view(-1, self.num_landmarks, 2)
+            residual = self.pca_residual_head(coarse_coords.flatten(1)).view(-1, self.num_landmarks, 2)
+            stage1_coords = (pca_recon + self.residual_scale * residual).clamp(0.0, 1.0)
+        else:
+            stage1_coords = coarse_coords
+
+        return stage1_coords, heatmap, p1
+
+    def _roi_refine(self, p1: torch.Tensor, stage1_coords: torch.Tensor) -> torch.Tensor:
+        batch, num_points, _ = stage1_coords.shape
+        compact = self.roi_proj(p1)
+
+        # Build per-point sampling grid
+        # grid_sample expects coords in [-1, 1]; we sample a (roi_size x roi_size) patch
+        # centered at each landmark. Patch radius in [0,1] = roi_size / (2 * heatmap_size).
+        radius_norm = float(self.roi_size) / (2.0 * float(self.heatmap_size))
+        device = stage1_coords.device
+        offsets_1d = torch.linspace(-radius_norm, radius_norm, self.roi_size, device=device)
+        gy, gx = torch.meshgrid(offsets_1d, offsets_1d, indexing="ij")
+        local_grid = torch.stack([gx, gy], dim=-1)  # (roi, roi, 2) in [0,1] space
+
+        center = stage1_coords.unsqueeze(2).unsqueeze(2)  # (B, N, 1, 1, 2)
+        sample_xy = (center + local_grid[None, None, :, :, :]) * 2.0 - 1.0  # to [-1, 1]
+        # flatten last two dims into (H_out=N*roi, W_out=roi)
+        sample_grid = sample_xy.reshape(batch, num_points * self.roi_size, self.roi_size, 2)
+
+        sampled = F.grid_sample(compact, sample_grid, mode="bilinear", padding_mode="border", align_corners=True)
+        # sampled: (B, roi_channels, N*roi, roi) -> (B, N, roi_channels, roi, roi)
+        sampled = sampled.view(batch, self.roi_channels, num_points, self.roi_size, self.roi_size)
+        sampled = sampled.permute(0, 2, 1, 3, 4).contiguous()
+
+        flat = sampled.reshape(batch * num_points, -1)
+        delta = self.refinement_mlp(flat)
+        delta = torch.tanh(delta) * self.refinement_range
+        return delta.view(batch, num_points, 2)
+
+    def forward_train(self, inputs: torch.Tensor):
+        stage1_coords, heatmap, p1 = self._stage1_forward(inputs)
+        delta = self._roi_refine(p1, stage1_coords)
+        refined = (stage1_coords + delta).clamp(0.0, 1.0)
+        return refined, None, heatmap
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        landmarks, _, _ = self.forward_train(inputs)
+        return landmarks
+
+
+
 def build_model(config: dict) -> LMNet:
     model_config = config["model"]
     architecture = str(model_config.get("arch", "lmnet"))
@@ -1129,6 +1299,10 @@ def build_model(config: dict) -> LMNet:
             head_type=str(model_config.get("head_type", "fc")),
             pip_grid=int(model_config.get("pip_grid", 8)),
             aux_pose_head=bool(model_config.get("pose_head", True)),
+            roi_size=int(model_config.get("roi_size", 4)),
+            roi_channels=int(model_config.get("roi_channels", 16)),
+            mlp_hidden=int(model_config.get("mlp_hidden", 64)),
+            refinement_scale=model_config.get("refinement_scale"),
         )
     if architecture == "mrffn":
         return MRFFNNet(
@@ -1139,6 +1313,22 @@ def build_model(config: dict) -> LMNet:
             pca_basis=int(model_config.get("pca_basis", 8)),
             use_pca=bool(model_config.get("use_pca", True)),
             pca_npz_path=model_config.get("pca_npz_path"),
+            heatmap_temperature=float(model_config.get("heatmap_temperature", 8.0)),
+        )
+    if architecture == "csprnet":
+        return CSPRNet(
+            num_landmarks=int(config["data"]["num_landmarks"]),
+            width_mult=float(model_config.get("width_mult", 1.0)),
+            fpn_dim=int(model_config.get("fpn_dim", 32)),
+            heatmap_size=int(model_config.get("heatmap_size", 64)),
+            pca_basis=int(model_config.get("pca_basis", 8)),
+            use_pca=bool(model_config.get("use_pca", True)),
+            pca_npz_path=model_config.get("pca_npz_path"),
+            heatmap_temperature=float(model_config.get("heatmap_temperature", 8.0)),
+            roi_size=int(model_config.get("roi_size", 4)),
+            roi_channels=int(model_config.get("roi_channels", 16)),
+            mlp_hidden=int(model_config.get("mlp_hidden", 64)),
+            refinement_scale=model_config.get("refinement_scale"),
         )
     if architecture == "resnet18_deconv":
         return ResNetDeconvHeatmapNet(

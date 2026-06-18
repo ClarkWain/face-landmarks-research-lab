@@ -1304,11 +1304,33 @@ def create_dataloaders(config: dict) -> DataBundle:
         share_summary = ", ".join(f"{name}={count}" for name, count in ranges)
         print(f"[data] mixed training: {share_summary}, total={len(train_dataset)}")
 
+        sampling_weights = mixed_cfg.get("sampling_weights")
+        if sampling_weights:
+            per_sample_weights: list[float] = []
+            for name, count in ranges:
+                target_weight = float(sampling_weights.get(name, 1.0))
+                per_sample_weights.extend([target_weight / max(count, 1)] * count)
+            weights_tensor = torch.tensor(per_sample_weights, dtype=torch.double)
+            epoch_steps = int(mixed_cfg.get("epoch_steps", 0))
+            if epoch_steps > 0:
+                num_samples = epoch_steps * int(config["train"]["batch_size"])
+            else:
+                num_samples = max(ranges[0][1] * 4, len(train_dataset) // 2)
+            from torch.utils.data import WeightedRandomSampler
+            sampler = WeightedRandomSampler(weights=weights_tensor, num_samples=num_samples, replacement=True)
+            weight_summary = ", ".join(
+                f"{name}_w={float(sampling_weights.get(name, 1.0)):.2f}" for name, _ in ranges
+            )
+            print(
+                f"[data] lapa_mixed weighted sampling: {weight_summary}, "
+                f"num_samples_per_epoch={num_samples}"
+            )
+
     pseudo_config = data_config.get("pseudo_celeba")
     wflw_aug_config = data_config.get("wflw_aug")
-    sampler = None
-    sampler_replacement = True
     if pseudo_config or wflw_aug_config:
+        sampler = None
+        sampler_replacement = True
         real_300w_count = len(train_dataset)
         datasets_in_order: list[Dataset] = [train_dataset]
         ranges: list[tuple[str, int]] = [("real_300w", real_300w_count)]

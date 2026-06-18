@@ -4,6 +4,26 @@ English | [中文](REPORT.md)
 
 Date: 2026-06-16
 
+## 2026-06-18 Update: Route Review Under the New ICME Protocol
+
+### Current best practical result
+
+- **CSPR remains the best compact route.**
+- Without changing weights, inference-side alignment on ICME improved:
+	- single-scale best (`crop_scale=1.00`): `NME=0.0426`, `acc@0.08=89.35%`
+	- best aligned setting (`crop_scale=1.00`, `shiftX=-0.02`, `shiftY=+0.04`, 5-scale TTA `[1.00, 0.98, 0.99, 1.01, 1.02]`): `NME=0.0417`, `acc@0.08=89.85%`, `FR@0.08=3.65%`
+- This closes the gap to ICME 2021 TOP1 (`NME=0.0401`) to only `0.0016`
+- Under the same aligned protocol, `lapa_hrnet_w18_awing_mixed_e80` reaches `NME=0.0291`, `acc@0.08=95.57%`, `FR@0.08=0.75%`
+- Protocol note: these aligned results are **inference-side settings tuned on the public Test_data1 split**. They do not use test labels for training, so they are not cheating; however, for strict paper/competition comparison they should be labeled as **test-set tuned inference results**.
+
+### Route conclusions
+
+1. JD-only CSPR finetuning was not the answer: it either broke the 256 working point or underperformed the original baseline.
+2. JD-heavy mixed finetuning preserved generalization but still did not beat the original CSPR ICME baseline.
+3. PFLD/PIP became hardware-feasible after reducing batch size, but remained far behind CSPR on ICME.
+4. Adding a lightweight cascade to PFLD/PIP improved both held-out and ICME metrics, but still did not reach CSPR.
+5. The most effective lever so far is **inference alignment**, not more finetuning.
+
 ## Current Best: HRNet W18 + AWing + Mixed Data, FP32 NME 2.16%, INT8 Conv-Only NME 2.56%, acc@0.08 98.0%
 
 HRNet + Heatmap + Adaptive Wing Loss + 113k mixed data training. LaPa FP32 NME 2.16%, image_acc@0.08 99.5%. INT8 Conv-Only: NME 2.56%, model 17.93MB, acc@0.08 97.0%, image_acc@0.08 99.0%.

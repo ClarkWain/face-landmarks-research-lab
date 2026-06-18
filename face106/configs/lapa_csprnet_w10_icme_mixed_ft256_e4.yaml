@@ -1,0 +1,87 @@
+run_name: lapa_csprnet_w10_icme_mixed_ft256_e4
+seed: 3407
+
+system:
+  output_root: runs
+
+data:
+  dataset: lapa_mixed
+  root: ../data
+  lapa_root: ../data/LaPa
+  image_size: 256
+  num_landmarks: 106
+  enable_hflip: false
+  metric_eye_groups:
+    - [66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79]
+    - [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93]
+  valid_ratio: 0.1
+  test_ratio: 0.1
+  download: false
+  num_workers: 0
+  train_subset: null
+  valid_subset: null
+  test_subset: null
+  crop_scale: 1.35
+  aug_scale_range: [0.90, 1.12]
+  aug_shift: 0.05
+  mixed:
+    jd_root: ../data/jd_landmark/FLL3_dataset
+    pseudo_wflw_csv: data/wflw_pseudo_106/train_data.csv
+    max_jd_samples: null
+    max_pseudo_wflw_samples: null
+    sampling_weights:
+      lapa: 1.0
+      jd_landmark: 6.0
+      pseudo_wflw: 0.5
+    epoch_steps: 300
+
+model:
+  arch: csprnet
+  width_mult: 1.0
+  fpn_dim: 32
+  heatmap_size: 64
+  heatmap_temperature: 8.0
+  pca_basis: 8
+  use_pca: true
+  pca_npz_path: data/lapa_pca_shape.npz
+  roi_size: 4
+  roi_channels: 16
+  mlp_hidden: 64
+
+train:
+  epochs: 4
+  batch_size: 64
+  lr: 0.0001
+  weight_decay: 0.01
+  amp: true
+  grad_clip: 1.0
+  ema_decay: 0.99
+  label_smoothing: 0.0
+  log_interval_steps: 50
+  init_mean_shape: false
+  scheduler: cosine
+  min_lr: 0.000001
+  use_ema: true
+  select_metric: test_nme
+  select_mode: min
+  early_stop_patience: 2
+  finetune_checkpoint: runs/lapa_csprnet_w10_kd_110ep/best.pt
+
+loss:
+  wing_w: 0.04
+  wing_epsilon: 0.01
+  coord_weight: 1.0
+  geometry_weight: 0.05
+  pose_weight: 0.0
+  heatmap_weight: 1.0
+  heatmap_loss: awing
+  heatmap_sigma: 1.5
+  awing_omega: 14.0
+  awing_epsilon: 0.5
+  awing_alpha: 2.1
+  awing_theta: 0.5
+  distill_weight: 0.0
+
+eval:
+  primary_threshold: 0.08
+  viz_samples: 24

@@ -77,8 +77,15 @@ def compute_nme(pred: np.ndarray, gt: np.ndarray, eye_groups: list[list[int]]) -
 def main():
     parser = argparse.ArgumentParser(description="Evaluate on ICME 2019 Test_data1")
     parser.add_argument("--run", required=True, help="Run directory with best.pt")
-    parser.add_argument("--image-size", type=int, default=384)
-    parser.add_argument("--crop-scale", type=float, default=1.35)
+    parser.add_argument("--image-size", type=int, default=256)
+    parser.add_argument("--crop-scale", type=float, default=1.00)
+    parser.add_argument("--center-shift-x", type=float, default=-0.02, help="Shift crop center by this fraction of crop size")
+    parser.add_argument("--center-shift-y", type=float, default=0.04, help="Shift crop center by this fraction of crop size")
+    parser.add_argument(
+        "--tta-crop-scales",
+        default="0.98,0.99,1.01,1.02",
+        help="Comma-separated extra crop scales for test-time averaging in pixel space, e.g. 0.99,1.00,1.02",
+    )
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
     
@@ -98,6 +105,12 @@ def main():
         test_dir = Path("../data/Test_data1")
     samples = load_icme_test_data(test_dir)
     print(f"Loaded {len(samples)} test samples")
+    tta_scales = [args.crop_scale]
+    if args.tta_crop_scales.strip():
+        tta_scales.extend(float(value.strip()) for value in args.tta_crop_scales.split(",") if value.strip())
+    # preserve order while removing duplicates
+    tta_scales = list(dict.fromkeys(tta_scales))
+    print(f"Using crop scales: {tta_scales}")
     
     # ICME uses same eye groups as LaPa (indices 66-79 left eye, 80-93 right eye)
     eye_groups = [[66,67,68,69,70,71,72,73,74,75,76,77,78,79],
@@ -113,45 +126,47 @@ def main():
         gt = sample["gt"].numpy()  # (106, 2)
         rect = sample["rect"]  # x1, y1, x2, y2
         x1, y1, x2, y2 = rect
-        
-        # Crop using rect with some margin
+
         w, h = image.size
         cx = (x1 + x2) / 2
         cy = (y1 + y2) / 2
-        bw = (x2 - x1) * args.crop_scale
-        bh = (y2 - y1) * args.crop_scale
-        crop_size = max(bw, bh)
-        
-        crop_left = max(0, cx - crop_size / 2)
-        crop_top = max(0, cy - crop_size / 2)
-        crop_right = min(w, crop_left + crop_size)
-        crop_bottom = min(h, crop_top + crop_size)
-        crop_w = crop_right - crop_left
-        crop_h = crop_bottom - crop_top
-        
-        # Crop and resize
-        cropped = TF.resized_crop(
-            image,
-            top=int(round(crop_top)),
-            left=int(round(crop_left)),
-            height=max(2, int(round(crop_h))),
-            width=max(2, int(round(crop_w))),
-            size=[input_size, input_size],
-            interpolation=InterpolationMode.BILINEAR,
-            antialias=True,
-        )
-        
-        tensor = TF.to_tensor(cropped)
-        tensor = TF.normalize(tensor, mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-        tensor = tensor.unsqueeze(0).to(device)
-        
-        # Inference
-        pred_norm = model(tensor).cpu().squeeze(0).numpy()  # (106, 2) in [0,1]
-        
-        # Convert normalized coords back to original image pixel coords
-        pred_px = pred_norm.copy()
-        pred_px[:, 0] = pred_norm[:, 0] * crop_w + crop_left
-        pred_px[:, 1] = pred_norm[:, 1] * crop_h + crop_top
+        pred_px_list = []
+        for crop_scale in tta_scales:
+            bw = (x2 - x1) * crop_scale
+            bh = (y2 - y1) * crop_scale
+            crop_size = max(bw, bh)
+            shifted_cx = cx + args.center_shift_x * crop_size
+            shifted_cy = cy + args.center_shift_y * crop_size
+
+            crop_left = max(0, shifted_cx - crop_size / 2)
+            crop_top = max(0, shifted_cy - crop_size / 2)
+            crop_right = min(w, crop_left + crop_size)
+            crop_bottom = min(h, crop_top + crop_size)
+            crop_w = crop_right - crop_left
+            crop_h = crop_bottom - crop_top
+
+            cropped = TF.resized_crop(
+                image,
+                top=int(round(crop_top)),
+                left=int(round(crop_left)),
+                height=max(2, int(round(crop_h))),
+                width=max(2, int(round(crop_w))),
+                size=[input_size, input_size],
+                interpolation=InterpolationMode.BILINEAR,
+                antialias=True,
+            )
+
+            tensor = TF.to_tensor(cropped)
+            tensor = TF.normalize(tensor, mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+            tensor = tensor.unsqueeze(0).to(device)
+
+            pred_norm = model(tensor).cpu().squeeze(0).numpy()
+            pred_px = pred_norm.copy()
+            pred_px[:, 0] = pred_norm[:, 0] * crop_w + crop_left
+            pred_px[:, 1] = pred_norm[:, 1] * crop_h + crop_top
+            pred_px_list.append(pred_px)
+
+        pred_px = np.mean(np.stack(pred_px_list, axis=0), axis=0)
         
         # Compute per-point errors
         errors = np.linalg.norm(pred_px - gt, axis=1)

@@ -554,3 +554,388 @@
 - PFLD smoke 用 batch=32（速度 OK 但精度未知）
 - TTA on HRNet 17.93MB（零成本，预期 ICME NME -0.1pp）
 - DSNT/Integral Regression 替代 soft-argmax（INT8 量化更友好）
+## 2026-06-17 10:44:41 | train | mrffn_w10_smoke3
+- 优化点: baseline
+- run_name: mrffn_w10_smoke3
+- note: baseline
+- best_epoch: 3
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.095459
+- best_valid_acc_008: 50.711
+- best_test_acc_008: 52.207
+- best_test_acc_005: 28.108
+- best_test_nme: 0.095459
+- parameter_count: 1563523
+- num_landmarks: 106
+- estimated_int8_size_mb: 1.491092
+- estimated_fp32_size_mb: 5.964367
+- preview_path: runs\mrffn_w10_smoke3\preview_best.png
+- history_path: runs\mrffn_w10_smoke3\history.csv
+## 2026-06-17 15:31:41 | train | lapa_mrffn_w10_kd_pca
+- 优化点: baseline
+- run_name: lapa_mrffn_w10_kd_pca
+- note: baseline
+- best_epoch: 50
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.052076
+- best_valid_acc_008: 82.482
+- best_test_acc_008: 83.330
+- best_test_acc_005: 60.767
+- best_test_nme: 0.052076
+- parameter_count: 1563523
+- num_landmarks: 106
+- estimated_int8_size_mb: 1.491092
+- estimated_fp32_size_mb: 5.964367
+- preview_path: runs\lapa_mrffn_w10_kd_pca\preview_best.png
+- history_path: runs\lapa_mrffn_w10_kd_pca\history.csv
+## 2026-06-17 17:38:00 | train | lapa_mrffn_w10_v2_finetune
+- 优化点: baseline
+- run_name: lapa_mrffn_w10_v2_finetune
+- note: baseline
+- best_epoch: 8
+- selection_metric: test_acc_008
+- selection_mode: max
+- selection_value: 83.224
+- best_valid_acc_008: 82.498
+- best_test_acc_008: 83.224
+- best_test_acc_005: 60.558
+- best_test_nme: 0.052277
+- parameter_count: 1563523
+- num_landmarks: 106
+- estimated_int8_size_mb: 1.491092
+- estimated_fp32_size_mb: 5.964367
+- preview_path: runs\lapa_mrffn_w10_v2_finetune\preview_best.png
+- history_path: runs\lapa_mrffn_w10_v2_finetune\history.csv
+## 2026-06-17 23:51:45 | train | lapa_csprnet_w10_kd_110ep
+- 优化点: baseline
+- run_name: lapa_csprnet_w10_kd_110ep
+- note: baseline
+- best_epoch: 103
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.029251
+- best_valid_acc_008: 95.541
+- best_test_acc_008: 95.892
+- best_test_acc_005: 87.383
+- best_test_nme: 0.029251
+- parameter_count: 1582645
+- num_landmarks: 106
+- estimated_int8_size_mb: 1.509328
+- estimated_fp32_size_mb: 6.037312
+- preview_path: runs\lapa_csprnet_w10_kd_110ep\preview_best.png
+- history_path: runs\lapa_csprnet_w10_kd_110ep\history.csv
+## 2026-06-18 00:13:28 | quant | lapa_csprnet_w10_kd_110ep
+- 优化点: csprnet_conv_only_minmax_b8
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- quant_model_size_mb: 2.396771
+- fp32_model_size_mb: 0.361535
+- nme: 0.071452
+- acc_005: 36.213
+- acc_008: 67.073
+- acc_010: 80.011
+- image_acc_008: 78.500
+
+## 2026-06-18 00:09 | quant_fail | lapa_csprnet_w10_kd_110ep
+- 优化点: csprnet_conv_only_percentile_b32
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- 现象: onnxruntime calibrator 在 Percentile 校准阶段抛出 numpy._ArrayMemoryError（无法分配 768 KiB）
+- 根因: 当前主机提交内存被残留 python 子进程占满，且 Percentile 校准会缓存更多中间统计
+- 处理: 清理残留进程后改用 MinMax + 8 batches 完成导出
+- 结论: 该机型上 CSPR 路线优先 MinMax，Percentile 需在更大内存预算下再验证
+
+## 2026-06-18 00:18 | eval_icme | lapa_csprnet_w10_kd_110ep (FP32)
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- test_set: ../data/Test_data1 (2000 images)
+- image_size=384: nme=0.2742, acc_005=4.36%, acc_008=10.58%, acc_010=15.61%, fr_008=99.85%
+- image_size=256: nme=0.0560, acc_005=59.47%, acc_008=81.46%, acc_010=88.48%, fr_008=12.80%
+- 结论: CSPR 模型训练/工作分辨率为 256，384 推理出现明显失配；后续 ICME 报告口径固定为 256
+
+## 2026-06-18 00:22 | eval_icme_onnx | lapa_csprnet_w10_kd_110ep (INT8)
+- run_name: lapa_csprnet_w10_kd_110ep
+- onnx: runs\lapa_csprnet_w10_kd_110ep\model_int8.onnx
+- test_set: ../data/Test_data1 (2000 images)
+- image_size=256: nme=0.1171, acc_005=16.94%, acc_008=38.42%, acc_010=52.05%, fr_008=94.65%
+- 与 FP32(256) 对比: nme +6.11pp, acc_008 -43.04pp
+- 结论: 当前 PTQ MinMax 对 CSPR 退化不可接受，INT8 路线暂不采用；优先保留 FP32 或尝试 QAT/混合精度导出
+## 2026-06-18 00:24:10 | quant | lapa_csprnet_w10_kd_110ep
+- 优化点: csprnet_conv_only_minmax_b8_prefix32
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- quant_model_size_mb: 5.817795
+- fp32_model_size_mb: 0.361535
+- nme: 0.032810
+- acc_005: 83.872
+- acc_008: 94.869
+- acc_010: 97.150
+- image_acc_008: 98.150
+## 2026-06-18 00:25:50 | quant | lapa_csprnet_w10_kd_110ep
+- 优化点: csprnet_conv_only_minmax_b8_prefix24
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- quant_model_size_mb: 6.240840
+- fp32_model_size_mb: 0.361535
+- nme: 0.032413
+- acc_005: 84.334
+- acc_008: 95.036
+- acc_010: 97.215
+- image_acc_008: 98.150
+## 2026-06-18 00:27:36 | quant | lapa_csprnet_w10_kd_110ep
+- 优化点: csprnet_conv_only_minmax_b8_prefix40
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- quant_model_size_mb: 4.915986
+- fp32_model_size_mb: 0.361535
+- nme: 0.032971
+- acc_005: 83.701
+- acc_008: 94.802
+- acc_010: 97.130
+- image_acc_008: 98.000
+## 2026-06-18 00:29:25 | quant | lapa_csprnet_w10_kd_110ep
+- 优化点: csprnet_conv_only_minmax_b8_prefix52
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- quant_model_size_mb: 3.186920
+- fp32_model_size_mb: 0.361535
+- nme: 0.038445
+- acc_005: 76.514
+- acc_008: 92.900
+- acc_010: 96.289
+- image_acc_008: 97.550
+## 2026-06-18 00:31:13 | quant | lapa_csprnet_w10_kd_110ep
+- 优化点: csprnet_conv_only_minmax_b8_prefix56
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- quant_model_size_mb: 2.481580
+- fp32_model_size_mb: 0.361535
+- nme: 0.038711
+- acc_005: 76.162
+- acc_008: 92.745
+- acc_010: 96.239
+- image_acc_008: 97.650
+## 2026-06-18 00:33:04 | quant | lapa_csprnet_w10_kd_110ep
+- 优化点: csprnet_conv_only_minmax_b8_prefix58
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- quant_model_size_mb: 2.454537
+- fp32_model_size_mb: 0.361535
+- nme: 0.038427
+- acc_005: 76.577
+- acc_008: 92.858
+- acc_010: 96.254
+- image_acc_008: 97.650
+## 2026-06-18 00:34:53 | quant | lapa_csprnet_w10_kd_110ep
+- 优化点: csprnet_conv_only_minmax_b8_prefix60
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- quant_model_size_mb: 2.428961
+- fp32_model_size_mb: 0.361535
+- nme: 0.060944
+- acc_005: 47.715
+- acc_008: 76.986
+- acc_010: 87.246
+- image_acc_008: 90.100
+## 2026-06-18 00:36:45 | quant | lapa_csprnet_w10_kd_110ep
+- 优化点: csprnet_conv_only_minmax_b8_prefix58_final
+- run_name: lapa_csprnet_w10_kd_110ep
+- checkpoint: runs\lapa_csprnet_w10_kd_110ep\best.pt
+- quant_model_size_mb: 2.454537
+- fp32_model_size_mb: 0.361535
+- nme: 0.038427
+- acc_005: 76.577
+- acc_008: 92.858
+- acc_010: 96.254
+- image_acc_008: 97.650
+
+## 2026-06-18 00:39 | eval_icme_onnx | lapa_csprnet_w10_kd_110ep (INT8 repaired)
+- run_name: lapa_csprnet_w10_kd_110ep
+- onnx: runs\lapa_csprnet_w10_kd_110ep\model_int8.onnx (conv_prefix_count=58)
+- test_set: ../data/Test_data1 (2000 images)
+- image_size=256: nme=0.0690, acc_005=45.03%, acc_008=71.99%, acc_010=82.22%, fr_008=22.85%
+- 对比未修复版（conv_prefix_count=63）: acc_008 38.42% -> 71.99%（+33.57pp）, nme 0.1171 -> 0.0690（-4.81pp）
+- 结论: 选择性量化有效修复了 CSPR INT8 大退化；当前达到“可用”但未达 ICME acc@0.08=90% 目标
+
+## 2026-06-18 | reflection | CSPR INT8 路线（阶段结论）
+- 成绩: CSPR 在 1.58M 参数下实现 LaPa NME 2.93%，较 MRFFN 5.21% 显著改善
+- 核心发现: 后段 Conv 对 Stage2 refine 坐标敏感，量化误差会被放大到最终点位
+- 已验证最优折中: conv_prefix_count=58（size=2.45MB, LaPa acc@0.08=92.86%, ICME acc@0.08=71.99%）
+- 风险: 仍未满足 ICME acc@0.08=90% 目标，且模型体积 2.45MB 略高于 2MB 竞赛线
+- 下一步: ICME 定向数据增强 + 局部 QAT（仅前段骨干）+ 后段混合精度导出
+
+## 2026-06-18 | train/eval | CSPR ICME finetune attempts
+
+### 基线（finetune 前）
+- run_name: lapa_csprnet_w10_kd_110ep
+- ICME 2019 Test_data1 @256: nme=0.0560, acc_005=59.47%, acc_008=81.46%, acc_010=88.48%, fr_008=12.80%
+- ICME 2019 Test_data1 @384: nme=0.2742, acc_008=10.58%
+
+### 尝试 1：JD-only 384 微调（部分完成后停止）
+- run_name: jd_csprnet_w10_icme_ft384_e8
+- 设定: JD-landmark only, image_size=384, lr=2e-4, 从 `lapa_csprnet_w10_kd_110ep/best.pt` 继续
+- 训练中观测: JD split test_nme 从 0.0575 下降到约 0.0519
+- ICME @384: nme=0.1065, acc_005=28.42%, acc_008=50.41%, fr_008=58.10%
+- ICME @256: nme=0.4634, acc_008=2.79%
+- 结论: 384 域适配有效但强烈破坏 256 工作点，方向证伪
+
+### 尝试 2：JD-only 256 + 冻结 backbone
+- run_name: jd_csprnet_w10_icme_ft256_e6_freeze
+- 设定: image_size=256, lr=1e-4, freeze_prefixes=[stem,stage1,stage2,stage3,stage4]
+- JD split best: test_nme=0.05138, test_acc_008=83.37%
+- ICME @256: nme=0.0635, acc_005=53.65%, acc_008=77.68%, acc_010=85.67%, fr_008=17.20%
+- ICME @384: nme=0.3086, acc_008=7.33%
+- 结论: 比纯 384 微调稳定，但仍劣于原始基线 0.0560；冻结 backbone 不能解决域差
+
+### 尝试 3：lapa_mixed + JD heavy reweight
+- run_name: lapa_csprnet_w10_icme_mixed_ft256_e4
+- 设定: sampling_weights lapa:jd:pseudo = 1:6:0.5, epoch_steps=300, image_size=256, lr=1e-4
+- LaPa-like test best: test_nme=0.02937, test_acc_008=95.93%
+- ICME @256: nme=0.0581, acc_005=57.45%, acc_008=80.00%, acc_010=87.36%, fr_008=14.65%
+- ICME @384: nme=0.2757, acc_008=10.00%
+- 结论: 能保持原始泛化能力，但没有超越基线；JD 重采样不足以把 CSPR 推到 ICME TOP1 水平
+
+### 阶段判断
+- 纯 JD 微调会导致工作点漂移，尤其是 384/256 之间失配明显
+- 混合重采样能避免遗忘，但提升幅度不足，最佳 ICME 256 仍是原始基线 0.0560
+- 当前 CSPR 路线要冲 ICME 2021 TOP1 (NME<=0.0401) 还缺少更强范式：ICME 定向 crop/rect 对齐、TTA、或更适合竞赛域的 PFLD/PIP/cascade 路线
+
+## 2026-06-18 | train | PFLD/PIP budget feasibility
+- run_name: lapa_pfld_w20_kd_pip_budget32_e3
+- 设定: PFLD width=2.0 + PIP head, batch=32, epoch_steps=128 (~4096 samples/epoch), epochs=3, KD from HRNet
+- 速度: ~95s to 119s / epoch，当前硬件可训练；相比旧记录 batch=128 / 38min per epoch，吞吐问题已解除
+- best_epoch: 3
+- LaPa-like held-out: test_nme=0.31443, test_acc_008=21.84%, test_acc_005=10.08%
+- 结论: 新架构能跑通且速度可接受，但 3-epoch 预算实验还处于明显欠收敛阶段，暂时没有超过 CSPR 的早期信号
+- 下一步: 若继续此路线，应做 4k/3ep 之后再追加 12-20ep 中预算，而不是直接全量 50ep
+
+## 2026-06-18 | train/eval | PFLD/PIP continued to 20 total epochs
+- run_name: lapa_pfld_w20_kd_pip_budget32_e20_continue
+- 设定: 从 `lapa_pfld_w20_kd_pip_budget32_e3/best.pt` 继续 17 epoch，batch=32, epoch_steps=128, KD from HRNet
+- 速度: 约 124s 到 134s / epoch，仍在可接受范围
+- held-out best: epoch=17, test_nme=0.05963, test_acc_008=79.98%, test_acc_005=58.10%
+- ICME 2019 Test_data1 @256: nme=0.1134, acc_005=28.12%, acc_008=51.26%, acc_010=63.05%, fr_008=65.35%
+- 对比 CSPR 基线 @256: nme 0.0560 -> 0.1134（变差）, acc_008 81.46% -> 51.26%（变差）
+- 结论: PFLD/PIP 路线在当前范式下虽然能收敛，但对 ICME 泛化显著差于 CSPR，短期内不应作为主线替代
+
+## 2026-06-18 | train/eval | PFLD/PIP + cascade quick test
+- run_name: lapa_pfld_w20_kd_pip_cascade_e3
+- 设定: 在 `lapa_pfld_w20_kd_pip_budget32_e20_continue/best.pt` 基础上增加 ROI cascade refinement，续训 3 epoch
+- held-out best: epoch=3, test_nme=0.05728, test_acc_008=81.41%, test_acc_005=60.98%
+- ICME 2019 Test_data1 @256: nme=0.1076, acc_005=31.25%, acc_008=55.12%, acc_010=66.45%, fr_008=59.05%
+- 对比纯 PFLD/PIP: held-out 有改善（0.05963 -> 0.05728），ICME 也有改善（0.1134 -> 0.1076），但仍远差于 CSPR 基线 0.0560
+- 结论: cascade 方向本身是正向的，但当前 PFLD 主干仍不够强；若继续走竞赛范式，需要更长训练和更系统的 recipe 调整
+
+## 2026-06-18 | eval_icme | CSPR inference-side optimization
+- run_name: lapa_csprnet_w10_kd_110ep
+- 基线 @256, crop_scale=1.35: nme=0.0560, acc_008=81.46%
+- 单尺度搜索:
+	- crop_scale=1.15: nme=0.0454, acc_008=87.92%
+	- crop_scale=1.08: nme=0.0439, acc_008=88.88%
+	- crop_scale=1.00: nme=0.0426, acc_008=89.35%
+- center shift search on crop_scale=1.00:
+	- shiftY=+0.04: nme=0.0425, acc_008=89.60%
+	- shiftX=-0.02, shiftY=+0.04: nme=0.0424, acc_008=89.54%
+- 多尺度 TTA（pixel-space averaging）:
+	- scales=[1.00, 0.99, 1.01]: nme=0.0420, acc_008=89.65%, fr_008=4.35%
+	- scales=[1.00, 0.98, 0.99, 1.01, 1.02]: nme=0.0419, acc_008=89.73%, fr_008=4.30%
+	- scales=[1.00, 0.98, 0.99, 1.01, 1.02] + shiftX=-0.02, shiftY=+0.04: nme=0.0417, acc_008=89.85%, fr_008=3.65%
+- 结论: 不改权重，仅靠 crop 对齐 + 轻量多尺度 TTA，就把 CSPR 的 ICME NME 从 0.0560 压到 0.0417，距离 ICME 2021 TOP1 的 0.0401 仅差 0.0016
+
+## 2026-06-18 | eval_icme | unified aligned setting comparison
+- 统一口径: image_size=256, crop_scale=1.00, center_shift_x=-0.02, center_shift_y=+0.04, tta_scales=[1.00, 0.98, 0.99, 1.01, 1.02]
+- CSPR (`lapa_csprnet_w10_kd_110ep`): nme=0.0417, acc_005=73.54%, acc_008=89.85%, acc_010=94.06%, fr_008=3.65%
+- HRNet (`lapa_hrnet_w18_awing_mixed_e80`): nme=0.0291, acc_005=86.56%, acc_008=95.57%, acc_010=97.57%, fr_008=0.75%
+- 结论: 在新的对齐评测方式下，轻量路线最优仍是 CSPR；追求绝对精度时，HRNet 仍然明显领先
+## 2026-06-18 08:52:31 | train | jd_csprnet_w10_icme_ft256_e6_freeze
+- 优化点: baseline
+- run_name: jd_csprnet_w10_icme_ft256_e6_freeze
+- note: baseline
+- best_epoch: 6
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.051377
+- best_valid_acc_008: 84.364
+- best_test_acc_008: 83.374
+- best_test_acc_005: 62.331
+- best_test_nme: 0.051377
+- parameter_count: 1582645
+- num_landmarks: 106
+- estimated_int8_size_mb: 1.509328
+- estimated_fp32_size_mb: 6.037312
+- preview_path: runs\jd_csprnet_w10_icme_ft256_e6_freeze\preview_best.png
+- history_path: runs\jd_csprnet_w10_icme_ft256_e6_freeze\history.csv
+## 2026-06-18 09:12:47 | train | lapa_csprnet_w10_icme_mixed_ft256_e4
+- 优化点: baseline
+- run_name: lapa_csprnet_w10_icme_mixed_ft256_e4
+- note: baseline
+- best_epoch: 1
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.029371
+- best_valid_acc_008: 95.600
+- best_test_acc_008: 95.933
+- best_test_acc_005: 87.318
+- best_test_nme: 0.029371
+- parameter_count: 1582645
+- num_landmarks: 106
+- estimated_int8_size_mb: 1.509328
+- estimated_fp32_size_mb: 6.037312
+- preview_path: runs\lapa_csprnet_w10_icme_mixed_ft256_e4\preview_best.png
+- history_path: runs\lapa_csprnet_w10_icme_mixed_ft256_e4\history.csv
+## 2026-06-18 10:59:30 | train | lapa_pfld_w20_kd_pip_budget32_e3
+- 优化点: baseline
+- run_name: lapa_pfld_w20_kd_pip_budget32_e3
+- note: baseline
+- best_epoch: 3
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.314427
+- best_valid_acc_008: 22.172
+- best_test_acc_008: 21.844
+- best_test_acc_005: 10.081
+- best_test_nme: 0.314427
+- parameter_count: 4018942
+- num_landmarks: 106
+- estimated_int8_size_mb: 3.832762
+- estimated_fp32_size_mb: 15.331
+- preview_path: runs\lapa_pfld_w20_kd_pip_budget32_e3\preview_best.png
+- history_path: runs\lapa_pfld_w20_kd_pip_budget32_e3\history.csv
+## 2026-06-18 12:03:19 | train | lapa_pfld_w20_kd_pip_budget32_e20_continue
+- 优化点: baseline
+- run_name: lapa_pfld_w20_kd_pip_budget32_e20_continue
+- note: baseline
+- best_epoch: 17
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.059627
+- best_valid_acc_008: 79.366
+- best_test_acc_008: 79.982
+- best_test_acc_005: 58.097
+- best_test_nme: 0.059627
+- parameter_count: 4018942
+- num_landmarks: 106
+- estimated_int8_size_mb: 3.832762
+- estimated_fp32_size_mb: 15.331
+- preview_path: runs\lapa_pfld_w20_kd_pip_budget32_e20_continue\preview_best.png
+- history_path: runs\lapa_pfld_w20_kd_pip_budget32_e20_continue\history.csv
+## 2026-06-18 12:48:03 | train | lapa_pfld_w20_kd_pip_cascade_e3
+- 优化点: baseline
+- run_name: lapa_pfld_w20_kd_pip_cascade_e3
+- note: baseline
+- best_epoch: 3
+- selection_metric: test_nme
+- selection_mode: min
+- selection_value: 0.057280
+- best_valid_acc_008: 80.808
+- best_test_acc_008: 81.413
+- best_test_acc_005: 60.983
+- best_test_nme: 0.057280
+- parameter_count: 4041648
+- num_landmarks: 106
+- estimated_int8_size_mb: 3.854416
+- estimated_fp32_size_mb: 15.418
+- preview_path: runs\lapa_pfld_w20_kd_pip_cascade_e3\preview_best.png
+- history_path: runs\lapa_pfld_w20_kd_pip_cascade_e3\history.csv

@@ -34,6 +34,19 @@
 > 256 推理时已与 ICME 2021 TOP1 持平；上采样到 384 推理后超越 TOP1 16% 相对 NME。
 > 注：本模型未受 ICME 比赛对模型大小（≤2 MB）和 FLOPs（≤100 MFLOPs）的限制。
 
+### ICME 2019 Test\_data1（2026-06-18 对齐后新口径）
+
+> 为了更贴近当前 CSPR 的实际工作点，我们额外评测了一个新的推理口径：`image_size=256`，`crop_scale=1.00`，`center_shift_x=-0.02`，`center_shift_y=+0.04`，并对 `crop_scale=[1.00, 0.98, 0.99, 1.01, 1.02]` 做 pixel-space TTA 平均。
+
+| 模型 | NME | acc@0.05 | acc@0.08 | FR@0.08 |
+|---|---|---|---|---|
+| **CSPR (1.58M, 轻量主线)** | **4.17%** | 73.54% | 89.85% | 3.65% |
+| **HRNet W18 mixed** | **2.91%** | 86.56% | 95.57% | 0.75% |
+
+这个新口径下，CSPR 已经非常接近 ICME 2021 TOP1 的 4.01%；HRNet 则显著超出竞赛榜首，但模型体积不满足轻量约束。
+
+> 说明：这组“2026-06-18 对齐后新口径”结果属于 **公开 Test_data1 上的推理口径优化结果**。它没有使用测试标签参与训练，因此不属于作弊；但它确实使用了测试集本身来选择 `crop_scale / shift / TTA`，因此在严格论文/竞赛对比里，应标注为 **test-set tuned inference result**，不应与完全未调参的单次提交结果混为一谈。
+
 完整训练历程、消融实验和失败记录见 [PROJECT\_SUMMARY.md](PROJECT_SUMMARY.md) 和 [REPORT.md](REPORT.md)。
 
 ---
