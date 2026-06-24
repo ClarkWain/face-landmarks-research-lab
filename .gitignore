@@ -7,6 +7,8 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+.idea/
+**/.idea/
 data/
 runs/
 logs/
@@ -23,3 +25,11 @@ logs/
 !docs/**
 !**/docs/
 !**/docs/**
+
+# Packaging/build outputs
+face106-pkg/build/
+face106-pkg/dist/
+face106-pkg/*.egg-info/
+
+# Local debug visualization only
+face106/docs/images/lapa_sample.png

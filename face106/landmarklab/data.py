@@ -328,11 +328,15 @@ class PseudoWFLWDataset(Dataset):
         width, height = (max_xy - min_xy).tolist()
         center_x, center_y = ((min_xy + max_xy) * 0.5).tolist()
         scale = self.crop_scale
+        fixed_shift_x = float(getattr(self, "center_shift_x", 0.0))
+        fixed_shift_y = float(getattr(self, "center_shift_y", 0.0))
         shift_scale = 0.0
         if self.augment:
             scale *= random.uniform(*self.aug_scale_range)
             shift_scale = self.aug_shift
         crop_size = max(width, height) * scale
+        center_x += fixed_shift_x * crop_size
+        center_y += fixed_shift_y * crop_size
         center_x += random.uniform(-shift_scale, shift_scale) * crop_size
         center_y += random.uniform(-shift_scale, shift_scale) * crop_size
         left = max(0.0, center_x - crop_size * 0.5)
@@ -468,11 +472,15 @@ class ThreeHundredWDataset(Dataset):
         width, height = (max_xy - min_xy).tolist()
         center_x, center_y = ((min_xy + max_xy) * 0.5).tolist()
         scale = self.crop_scale
+        fixed_shift_x = float(getattr(self, "center_shift_x", 0.0))
+        fixed_shift_y = float(getattr(self, "center_shift_y", 0.0))
         shift_scale = 0.0
         if self.augment:
             scale *= random.uniform(*self.aug_scale_range)
             shift_scale = self.aug_shift
         crop_size = max(width, height) * scale
+        center_x += fixed_shift_x * crop_size
+        center_y += fixed_shift_y * crop_size
         center_x += random.uniform(-shift_scale, shift_scale) * crop_size
         center_y += random.uniform(-shift_scale, shift_scale) * crop_size
 
@@ -1236,18 +1244,26 @@ def create_dataloaders(config: dict) -> DataBundle:
     crop_scale = float(data_config.get("crop_scale", 1.30))
     aug_scale_range = tuple(float(value) for value in data_config.get("aug_scale_range", [0.92, 1.18]))
     aug_shift = float(data_config.get("aug_shift", 0.05))
+    center_shift_x = float(data_config.get("center_shift_x", 0.0))
+    center_shift_y = float(data_config.get("center_shift_y", 0.0))
     use_full_image = bool(data_config.get("use_full_image", False))
     train_dataset.crop_scale = crop_scale
     train_dataset.aug_scale_range = aug_scale_range
     train_dataset.aug_shift = aug_shift
+    train_dataset.center_shift_x = center_shift_x
+    train_dataset.center_shift_y = center_shift_y
     train_dataset.use_full_image = use_full_image
     valid_dataset.crop_scale = crop_scale
     valid_dataset.aug_scale_range = aug_scale_range
     valid_dataset.aug_shift = aug_shift
+    valid_dataset.center_shift_x = center_shift_x
+    valid_dataset.center_shift_y = center_shift_y
     valid_dataset.use_full_image = use_full_image
     test_dataset.crop_scale = crop_scale
     test_dataset.aug_scale_range = aug_scale_range
     test_dataset.aug_shift = aug_shift
+    test_dataset.center_shift_x = center_shift_x
+    test_dataset.center_shift_y = center_shift_y
     test_dataset.use_full_image = use_full_image
 
     # ---- lapa_mixed: merge JD-landmark + Pseudo-WFLW into LaPa training set ----
@@ -1276,6 +1292,8 @@ def create_dataloaders(config: dict) -> DataBundle:
                 aug_shift=aug_shift,
                 enable_hflip=bool(data_config.get("enable_hflip", False)),
             )
+            jd_dataset.center_shift_x = center_shift_x
+            jd_dataset.center_shift_y = center_shift_y
             datasets_in_order.append(jd_dataset)
             ranges.append(("jd_landmark", len(jd_dataset)))
 
@@ -1297,6 +1315,8 @@ def create_dataloaders(config: dict) -> DataBundle:
                 aug_shift=aug_shift,
                 enable_hflip=bool(data_config.get("enable_hflip", False)),
             )
+            pw_dataset.center_shift_x = center_shift_x
+            pw_dataset.center_shift_y = center_shift_y
             datasets_in_order.append(pw_dataset)
             ranges.append(("pseudo_wflw", len(pw_dataset)))
 
