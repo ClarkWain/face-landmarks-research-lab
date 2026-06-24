@@ -15,6 +15,7 @@
 
 | Directory | Task | Training data | INT8 model | Key metrics | README |
 |---|---|---|---|---|---|
+| [`face-det/`](face-det/) | face detection | LaPa landmarks → bbox + Test_data1 benchmark | FP32 | `Test_data1`: **AP50 99.5 / Recall 100% / AP50-95 58.2** | [face-det/README.en.md](face-det/README.en.md) |
 | [`face106/`](face106/) | 106 landmarks | LaPa + JD-landmark + Pseudo WFLW (113k) | **17.93 MB** | LaPa NME **2.37%** / ICME 2019 NME **3.37%** (16% rel. better than ICME 2021 TOP1) | [face106/README.en.md](face106/README.en.md) |
 | [`face68/`](face68/) | 68 landmarks | 300W + 100k pseudo CelebA | **15.48 MB** | 300W NME **5.94%** / acc@0.08 **76.9%** | [face68/README.en.md](face68/README.en.md) |
 
@@ -51,6 +52,7 @@ See [face106/README.en.md](face106/README.en.md) and [face106-pkg/](face106-pkg/
 
 ```
 NewFaceDetect/
+├── face-det/             # face detection project (YOLO strong baseline + Test_data1 benchmark)
 ├── face106/              # 106-pt project (HRNet W18 + AWing Loss + mixed data)
 ├── face68/               # 68-pt project (LMNet + 100k pseudo labels)
 ├── face106-pkg/          # pip-installable wrapper of face106 INT8 ONNX

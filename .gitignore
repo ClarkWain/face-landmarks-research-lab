@@ -31,5 +31,9 @@ face106-pkg/build/
 face106-pkg/dist/
 face106-pkg/*.egg-info/
 
+# Detector generated assets
+face-det/data/
+face-det/runs/
+
 # Local debug visualization only
 face106/docs/images/lapa_sample.png
