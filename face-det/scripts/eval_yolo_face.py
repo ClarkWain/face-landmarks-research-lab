@@ -15,6 +15,7 @@ def main() -> None:
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--device", default="0")
+    parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
@@ -29,6 +30,7 @@ def main() -> None:
         imgsz=args.imgsz,
         batch=args.batch,
         device=args.device,
+        workers=args.workers,
         save_json=False,
         plots=False,
         verbose=True,

@@ -1,0 +1,7 @@
+path: ./face-det/data/wider_eval_hard
+train: images/val
+val: images/val
+test: images/val
+
+names:
+  0: face
